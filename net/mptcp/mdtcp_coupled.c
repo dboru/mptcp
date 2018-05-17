@@ -1,5 +1,5 @@
 /*
- *	MPTCP implementation - Linked Increase congestion control Algorithm (LIA)
+ *	 Multipath Datacenter TCP(MDTCP)-a Coupled Congestion Control for Datacenter
  *
  *	Initial Design & Implementation:
  *	Sébastien Barré <sebastien.barre@uclouvain.be>
@@ -19,6 +19,7 @@
  *	John Ronan <jronan@tssg.org>
  *	Catalin Nicutar <catalin.nicutar@gmail.com>
  *	Brandon Heller <brandonh@stanford.edu>
+ *      Dejene Boru Oljira <oljideje@kau.se>
  *
  *
  *	This program is free software; you can redistribute it and/or
