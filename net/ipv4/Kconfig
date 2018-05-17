@@ -707,6 +707,14 @@ config TCP_CONG_BALIA
 	Multipath TCP Balanced Linked Adaptation Congestion Control
 	To enable it, just put 'balia' in tcp_congestion_control
 
+config TCP_CONG_MDTCP
+	tristate "MDTCP COUPLED CONGESTION CONTROL"
+	depends on MPTCP
+	default n
+	---help---
+	Multipath DCTCP Coupled Congestion Control
+	To enable it, just put 'mdtcp' in tcp_congestion_control
+
 choice
 	prompt "Default TCP congestion control"
 	default DEFAULT_CUBIC
