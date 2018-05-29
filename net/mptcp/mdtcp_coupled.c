@@ -46,7 +46,7 @@
  */
 static int alpha_scale_den = 10;
 static int alpha_scale_num = 32;
-static int alpha_scale = 12;
+static int alpha_scale = 22;
 
 struct mdtcp_ccc {
 	/*mptcp parameters*/
@@ -154,7 +154,7 @@ static void mdtcp_ccc_recalc_alpha(const struct sock *sk)
 		 * Integer-overflow is not possible here, because
 		 * tmp will be in u64.
 		 */
-		tmp = div64_u64(mdtcp_ccc_scale(sub_tp->snd_cwnd,
+		tmp = div64_u64(mdtcp_ccc_scale(1,
 		                                alpha_scale_num), (u64)sub_tp->srtt_us);
 
 		// tmp = div64_u64(mdtcp_ccc_scale(sub_tp->snd_cwnd,
@@ -206,7 +206,7 @@ static void mdtcp_ccc_recalc_alpha(const struct sock *sk)
 	}
 
 	// alpha = div64_u64(mdtcp_ccc_scale(best_cwnd, alpha_scale_num), sum_denominator);
-	alpha = div64_u64(mdtcp_ccc_scale(best_cwnd, alpha_scale_num), sum_denominator);
+	alpha = div64_u64(mdtcp_ccc_scale(1, alpha_scale_num), sum_denominator);
 
 	if (unlikely(!alpha))
 		alpha = 1;
