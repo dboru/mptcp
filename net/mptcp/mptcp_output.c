@@ -1693,8 +1693,9 @@ static inline u64 mptcp_calc_rate(const struct sock *meta_sk, unsigned int mss,
 				      (u64)tp->srtt_us *
 				      DIV_ROUND_UP(mss, this_mss) * this_mss);
 		rate += this_rate;
+                
 	}
-
+        
 	return rate;
 }
 

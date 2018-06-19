@@ -456,6 +456,20 @@ struct tcp_sock {
 	char		mptcp_sched_name[MPTCP_SCHED_NAME_MAX];
 	char		mptcp_pm_name[MPTCP_PM_NAME_MAX];
 #endif /* CONFIG_MPTCP */
+
+	/*
+	MDTCP_DCTCP parameters 
+	*/
+	u32 acked_bytes_ecn;
+	u32 acked_bytes_total;
+	u32 prior_snd_una;
+	u32 prior_rcv_nxt;
+	u32 mdtcp_dctcp_alpha;
+	u32 next_seq;
+	u32 ce_state;
+	u32 delayed_ack_reserved;
+	u32 loss_cwnd;
+	/* end MDTCP_DCTCP*/
 };
 
 enum tsq_enum {

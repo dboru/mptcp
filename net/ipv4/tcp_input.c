@@ -1969,6 +1969,10 @@ void tcp_enter_loss(struct sock *sk)
 	tp->snd_cwnd	   = 1;
 	tp->snd_cwnd_cnt   = 0;
 	tp->snd_cwnd_stamp = tcp_jiffies32;
+        struct inet_sock *inet=inet_sk(sk);
+        //printk("loss:cwnd %u ssthresh %u dc-alpha %u destip %pI4/%u \n",
+          //             tp->snd_cwnd,tp->snd_ssthresh,tp->mdtcp_dctcp_alpha,&inet->inet_daddr,
+            //           ntohs(inet->inet_dport));
 
 	tp->retrans_out = 0;
 	tp->lost_out = 0;
@@ -2386,13 +2390,17 @@ static void tcp_undo_cwnd_reduction(struct sock *sk, bool unmark_loss)
 
 	if (tp->prior_ssthresh) {
 		const struct inet_connection_sock *icsk = inet_csk(sk);
-
+               
 		tp->snd_cwnd = icsk->icsk_ca_ops->undo_cwnd(sk);
-
+            
 		if (tp->prior_ssthresh > tp->snd_ssthresh) {
 			tp->snd_ssthresh = tp->prior_ssthresh;
 			tcp_ecn_withdraw_cwr(tp);
 		}
+               struct inet_sock *inet=inet_sk(sk);
+               //printk("undo_cwnd:cwnd %u ssthresh %u dc-alpha %u destip %pI4/%u \n",
+                 //      tp->snd_cwnd,tp->snd_ssthresh,tp->mdtcp_dctcp_alpha,&inet->inet_daddr,
+                   //    ntohs(inet->inet_dport));
 	}
 	tp->snd_cwnd_stamp = tcp_jiffies32;
 	tp->undo_marker = 0;
@@ -2521,6 +2529,10 @@ void tcp_cwnd_reduction(struct sock *sk, int newly_acked_sacked, int flag)
 	/* Force a fast retransmit upon entering fast recovery */
 	sndcnt = max(sndcnt, (tp->prr_out ? 0 : 1));
 	tp->snd_cwnd = tcp_packets_in_flight(tp) + sndcnt;
+        struct inet_sock *inet=inet_sk(sk);
+        //printk("cwnd_reduction:cwnd %u ssthresh %u dc-alpha %u destip %pI4/%u \n",
+          //             tp->snd_cwnd,tp->snd_ssthresh,tp->mdtcp_dctcp_alpha,&inet->inet_daddr,
+            //           ntohs(inet->inet_dport));
 }
 
 static inline void tcp_end_cwnd_reduction(struct sock *sk)
@@ -2537,6 +2549,10 @@ static inline void tcp_end_cwnd_reduction(struct sock *sk)
 		tp->snd_cwnd_stamp = tcp_jiffies32;
 	}
 	tcp_ca_event(sk, CA_EVENT_COMPLETE_CWR);
+     struct inet_sock *inet=inet_sk(sk);
+        //printk("end_cwnd_reduction:cwnd %u ssthresh %u dc-alpha %u destip %pI4/%u \n",
+          //             tp->snd_cwnd,tp->snd_ssthresh,tp->mdtcp_dctcp_alpha,&inet->inet_daddr,
+            //           ntohs(inet->inet_dport));
 }
 
 /* Enter CWR state. Disable cwnd undo since congestion is proven with ECN */

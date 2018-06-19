@@ -187,6 +187,7 @@ static void dctcp_ce_state_1_to_0(struct sock *sk)
 }
 
 static void dctcp_update_alpha(struct sock *sk, u32 flags)
+
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	struct dctcp *ca = inet_csk_ca(sk);
@@ -230,8 +231,8 @@ static void dctcp_update_alpha(struct sock *sk, u32 flags)
 		dctcp_reset(tp, ca);
 	}
 }
-
 static void dctcp_state(struct sock *sk, u8 new_state)
+
 {
 	if (dctcp_clamp_alpha_on_loss && new_state == TCP_CA_Loss) {
 		struct dctcp *ca = inet_csk_ca(sk);
@@ -247,8 +248,8 @@ static void dctcp_state(struct sock *sk, u8 new_state)
 		ca->dctcp_alpha = DCTCP_MAX_ALPHA;
 	}
 }
-
 static void dctcp_update_ack_reserved(struct sock *sk, enum tcp_ca_event ev)
+
 {
 	struct dctcp *ca = inet_csk_ca(sk);
 

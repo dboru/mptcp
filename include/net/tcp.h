@@ -1186,7 +1186,14 @@ u32 tcp_reno_ssthresh(struct sock *sk);
 u32 tcp_reno_undo_cwnd(struct sock *sk);
 void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 acked);
 extern struct tcp_congestion_ops tcp_reno;
-
+/*MDTCP_DCTCP functions*/
+void mdtcp_dctcp_init(struct sock *sk);
+u32 mdtcp_dctcp_ssthresh(struct sock *sk);
+void mdtcp_dctcp_update_alpha(struct sock *sk, u32 flags);
+void mdtcp_dctcp_state(struct sock *sk, u8 new_state);
+void mdtcp_dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev);
+u32  mdtcp_dctcp_cwnd_undo(struct sock *sk);
+/*end MDTCP_DCTCP*/
 struct tcp_congestion_ops *tcp_ca_find_key(u32 key);
 u32 tcp_ca_get_key_by_name(const char *name, bool *ecn_ca);
 #ifdef CONFIG_INET

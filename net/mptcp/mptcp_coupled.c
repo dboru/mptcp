@@ -112,11 +112,17 @@ static void mptcp_ccc_recalc_alpha(const struct sock *sk)
 		tmp = div64_u64(mptcp_ccc_scale(sub_tp->snd_cwnd,
 				alpha_scale_num), (u64)sub_tp->srtt_us * sub_tp->srtt_us);
 
+		// printk("mprtt1:best_rtt %u rtt %u cwnd %u path id %d no subflows %d\n",
+  //                      best_rtt,sub_tp->srtt_us, sub_tp->snd_cwnd,sub_tp->mptcp->path_index,mpcb->cnt_established);
+
 		if (tmp >= max_numerator) {
 			max_numerator = tmp;
 			best_cwnd = sub_tp->snd_cwnd;
 			best_rtt = sub_tp->srtt_us;
 		}
+
+		 // printk("mprtt2:best_rtt %u rtt %u cwnd %u path id %d no subflows %d\n",
+   //                     best_rtt,sub_tp->srtt_us, sub_tp->snd_cwnd,sub_tp->mptcp->path_index,mpcb->cnt_established);
 	}
 
 	/* No subflow is able to send - we don't care anymore */
@@ -219,11 +225,18 @@ static void mptcp_ccc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		snd_cwnd = (int) div_u64 ((u64) mptcp_ccc_scale(1, alpha_scale),
 						alpha);
 
+		// printk("mdca1:snd_cwnd %d cwnd %u alpha %llu path id %d no subflows %d\n",
+  //                      snd_cwnd,tp->snd_cwnd, alpha,tp->mptcp->path_index,mpcb->cnt_established);
+
 		/* snd_cwnd_cnt >= max (scale * tot_cwnd / alpha, cwnd)
 		 * Thus, we select here the max value.
 		 */
 		if (snd_cwnd < tp->snd_cwnd)
 			snd_cwnd = tp->snd_cwnd;
+
+		// printk("mdca2:snd_cwnd %d cwnd %u alpha %llu path id %d no subflows %d\n",
+  //                      snd_cwnd,tp->snd_cwnd, alpha,tp->mptcp->path_index,mpcb->cnt_established);
+
 	} else {
 		snd_cwnd = tp->snd_cwnd;
 	}
