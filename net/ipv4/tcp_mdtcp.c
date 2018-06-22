@@ -195,7 +195,7 @@ static void mdtcp_dctcp_ce_state_1_to_0(struct sock *sk)
 void mdtcp_dctcp_update_alpha(struct sock *sk, u32 flags)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-    struct inet_sock *inet=inet_sk(sk);
+       // struct inet_sock *inet=inet_sk(sk);
 	u32 acked_bytes = tp->snd_una - tp->prior_snd_una;
 
 	/* If ack did not advance snd_una, count dupack as MSS size.
@@ -236,20 +236,10 @@ void mdtcp_dctcp_update_alpha(struct sock *sk, u32 flags)
 		mdtcp_dctcp_reset(tp);
 	}
 
-   
-    /*reverted*/
-	// if(flags & CA_ACK_ECE){
-	// 	unsigned int cwnd=mdtcp_dctcp_ssthresh(sk);
-	// 	if(cwnd!=tp->snd_cwnd)
-	// 		tp->snd_cwnd=cwnd;
-	// 	printk("dc-alpha:cwnd %u dc-alpha %u destip %pI4/%u \n",
- //                      tp->snd_cwnd,tp->mdtcp_dctcp_alpha,&inet->inet_daddr,
- //                      ntohs(inet->inet_dport));
-
-	// }
+  
 }
 EXPORT_SYMBOL_GPL(mdtcp_dctcp_update_alpha);
-// static void mdtcp_dctcp_state(struct sock *sk, u8 new_state)
+
 void mdtcp_dctcp_state(struct sock *sk, u8 new_state)
 {
 	if (mdtcp_dctcp_clamp_alpha_on_loss && new_state == TCP_CA_Loss) {
@@ -290,7 +280,7 @@ static void mdtcp_dctcp_update_ack_reserved(struct sock *sk, enum tcp_ca_event e
 	}
 }
 
-// static void mdtcp_dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
+
 void mdtcp_dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 {
 	switch (ev) {
