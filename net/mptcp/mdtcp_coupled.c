@@ -131,7 +131,7 @@ static void mdtcp_ccc_recalc_alpha(const struct sock *sk)
 		 * tmp will be in u64.
 		 */
 
-	       if (best_rtt == 0 || sub_tp->srtt_us <= bes_rtt) 
+	       if (best_rtt == 0 || sub_tp->srtt_us <= best_rtt) 
                     {
 			best_rtt = sub_tp->srtt_us;
 		    }
