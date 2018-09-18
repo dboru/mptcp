@@ -45,6 +45,7 @@ static int alpha_scale = 12;
 struct mptcp_ccc {
 	u64	alpha;
 	bool	forced_update;
+	// ktime_t start;
 };
 
 static inline int mptcp_ccc_sk_can_send(const struct sock *sk)
@@ -165,9 +166,11 @@ exit:
 
 static void mptcp_ccc_init(struct sock *sk)
 {
+	// struct mptcp_ccc *ca = inet_csk_ca(sk);
 	if (mptcp(tcp_sk(sk))) {
 		mptcp_set_forced(mptcp_meta_sk(sk), 0);
 		mptcp_set_alpha(mptcp_meta_sk(sk), 1);
+		// ca->start = ktime_get();
 	}
 	/* If we do not mptcp, behave like reno: return */
 }
@@ -190,6 +193,9 @@ static void mptcp_ccc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	const struct mptcp_cb *mpcb = tp->mpcb;
+	// struct inet_sock *inet=inet_sk(sk);
+	// struct mptcp_ccc *ca = inet_csk_ca(sk);
+	// struct timespec tv = ktime_to_timespec(ktime_sub(ktime_get(),ca->start));
 	int snd_cwnd;
 
 	if (!mptcp(tp)) {
@@ -222,8 +228,7 @@ static void mptcp_ccc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		if (unlikely(!alpha))
 			alpha = 1;
 
-		snd_cwnd = (int) div_u64 ((u64) mptcp_ccc_scale(1, alpha_scale),
-						alpha);
+		snd_cwnd = (int) div_u64 ((u64) mptcp_ccc_scale(1, alpha_scale),alpha);
 
 		// printk("mdca1:snd_cwnd %d cwnd %u alpha %llu path id %d no subflows %d\n",
   //                      snd_cwnd,tp->snd_cwnd, alpha,tp->mptcp->path_index,mpcb->cnt_established);
@@ -234,8 +239,9 @@ static void mptcp_ccc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		if (snd_cwnd < tp->snd_cwnd)
 			snd_cwnd = tp->snd_cwnd;
 
-		// printk("mdca2:snd_cwnd %d cwnd %u alpha %llu path id %d no subflows %d\n",
-  //                      snd_cwnd,tp->snd_cwnd, alpha,tp->mptcp->path_index,mpcb->cnt_established);
+		// printk("ktime: %lu.%09lu cwnd: %u lia-alfa: %llu srcip %pI4/%u dstip %pI4/%u\n",(unsigned long) tv.tv_sec,(unsigned long) tv.tv_nsec,tp->snd_cwnd,alpha,&inet->inet_saddr,
+  //                     ntohs(inet->inet_sport),&inet->inet_daddr,
+  //                     ntohs(inet->inet_dport));
 
 	} else {
 		snd_cwnd = tp->snd_cwnd;
@@ -243,7 +249,7 @@ static void mptcp_ccc_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (tp->snd_cwnd_cnt >= snd_cwnd) {
 		if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
-			tp->snd_cwnd++;
+			tp->snd_cwnd++;			
 			mptcp_ccc_recalc_alpha(sk);
 		}
 

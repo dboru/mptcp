@@ -473,6 +473,9 @@ void tcp_init_sock(struct sock *sk)
 
 	tp->ops = &tcp_specific;
 
+	/*Initialize MDTCP subflow cong estimate*/
+	tp->mdtcp_cong_estimate=1024;
+
 	/* Initialize MPTCP-specific stuff and function-pointers */
 	mptcp_init_tcp_sock(sk);
 

@@ -143,7 +143,6 @@ enum {
 	INET_DIAG_PAD,
 	INET_DIAG_MARK,
 	INET_DIAG_BBRINFO,
-	INET_DIAG_MDTCPINFO,
 	INET_DIAG_CLASS_ID,
 	INET_DIAG_MD5SIG,
 	__INET_DIAG_MAX,
@@ -191,20 +190,20 @@ struct tcp_bbr_info {
 	__u32	bbr_cwnd_gain;		/* cwnd gain shifted left 8 bits */
 };
 
-/* INET_DIAG_MDTCPINFO */
+// /* INET_DIAG_MDTCPINFO */
 
-struct tcp_mdtcp_info {
-	__u16	dctcp_enabled;
-	__u16	dctcp_ce_state;
-	__u32	dctcp_alpha;
-	__u32	dctcp_ab_ecn;
-	__u32	dctcp_ab_tot;
-};
+// struct tcp_mdtcp_info {
+// 	__u16	dctcp_enabled;
+// 	__u16	dctcp_ce_state;
+// 	__u32	dctcp_alpha;
+// 	__u32	dctcp_ab_ecn;
+// 	__u32	dctcp_ab_tot;
+// };
 
 union tcp_cc_info {
 	struct tcpvegas_info	vegas;
 	struct tcp_dctcp_info	dctcp;
 	struct tcp_bbr_info	bbr;
-	struct tcp_mdtcp_info mdtcp;
+	// struct tcp_mdtcp_info mdtcp;
 };
 #endif /* _UAPI_INET_DIAG_H_ */

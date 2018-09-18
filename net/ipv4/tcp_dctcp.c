@@ -219,6 +219,7 @@ static void dctcp_update_alpha(struct sock *sk, u32 flags)
 			 * after 8 Mbytes.
 			 */
 			bytes_ecn <<= (10 - dctcp_shift_g);
+
 			do_div(bytes_ecn, max(1U, ca->acked_bytes_total));
 
 			alpha = min(alpha + (u32)bytes_ecn, DCTCP_MAX_ALPHA);
