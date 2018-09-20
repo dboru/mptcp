@@ -121,8 +121,11 @@ static inline void mdtcp_set_alpha(const struct sock *meta_sk, u64 alpha)
 	((struct mdtcp *)inet_csk_ca(meta_sk))->alpha = alpha;
 }
 
+static inline u64 mdtcp_scale(u32 val, int scale)
+{
 	return (u64) val << scale;
 }
+
 
 static inline bool mdtcp_get_forced(const struct sock *meta_sk)
 {
@@ -173,6 +176,7 @@ static u32 mdtcp_ssthresh(struct sock *sk)
 		mptcp_for_each_sk(mpcb, sub_sk) {
 			struct tcp_sock *sub_tp = tcp_sk(sub_sk);
 			if (!mdtcp_sk_can_send(sub_sk))
+
 				continue;
 			alfa_mean += sub_tp->mdtcp_cong_estimate;
 		}
@@ -600,7 +604,7 @@ static void mdtcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 
 
 static struct tcp_congestion_ops mdtcp __read_mostly = {
-	.init		= mdtcp_ccc_init,
+	.init		= mdtcp_init,
 	.in_ack_event   = mdtcp_update_alpha,
 	.ssthresh	= mdtcp_ssthresh,
 	.cong_avoid	= mdtcp_cong_avoid,
