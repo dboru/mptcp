@@ -495,21 +495,22 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (old_cwnd < tp->snd_cwnd && mpcb->cnt_established > 1)
 		mdtcp_recalc_alpha(sk);
-	/*
-	   if (mpcb->cnt_established > 1) {
-	   if (tp->snd_cwnd_cnt >= snd_cwnd) {
-	   if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
-	   tp->snd_cwnd++;
-	   mdtcp_recalc_alpha(sk);
+   /*
+     if (mpcb->cnt_established > 1) {
+	 if (tp->snd_cwnd_cnt >= snd_cwnd) {
+	     if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
+	          tp->snd_cwnd++;
+	         mdtcp_recalc_alpha(sk);
 	   }
 
 	   tp->snd_cwnd_cnt = 0;
 	   } else {
+              tp->snd_cwnd_cnt++;
+	   }
 
-	   tp->snd_cwnd_cnt++;
-	   }
-	   }
-	 */
+     }
+	
+    */
 
   }
 
