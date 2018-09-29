@@ -794,13 +794,6 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 
 	sock_rps_record_flow(sk);
 
-#ifdef CONFIG_MPTCP
-	if (mptcp(tcp_sk(sk))) {
-		struct sock *sk_it;
-		mptcp_for_each_sk(tcp_sk(sk)->mpcb, sk_it)
-			sock_rps_record_flow(sk_it);
-	}
-#endif
 	/*
 	 * We can't seek on a socket input
 	 */
@@ -810,6 +803,14 @@ ssize_t tcp_splice_read(struct socket *sock, loff_t *ppos,
 	ret = spliced = 0;
 
 	lock_sock(sk);
+
+#ifdef CONFIG_MPTCP
+	if (mptcp(tcp_sk(sk))) {
+		struct sock *sk_it;
+		mptcp_for_each_sk(tcp_sk(sk)->mpcb, sk_it)
+			sock_rps_record_flow(sk_it);
+	}
+#endif
 
 	timeo = sock_rcvtimeo(sk, sock->file->f_flags & O_NONBLOCK);
 	while (tss.len) {
@@ -1255,7 +1256,8 @@ int tcp_sendmsg_locked(struct sock *sk, struct msghdr *msg, size_t size)
 			uarg->zerocopy = 0;
 	}
 
-	if (unlikely(flags & MSG_FASTOPEN || inet_sk(sk)->defer_connect)) {
+	if (unlikely(flags & MSG_FASTOPEN || inet_sk(sk)->defer_connect) &&
+	    !tp->repair) {
 		err = tcp_sendmsg_fastopen(sk, msg, &copied_syn, size);
 		if (err == -EINPROGRESS && copied_syn > 0)
 			goto out;
@@ -1922,7 +1924,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 			 * shouldn't happen.
 			 */
 			if (WARN(before(*seq, TCP_SKB_CB(skb)->seq),
-				 "recvmsg bug: copied %X seq %X rcvnxt %X fl %X\n",
+				 "TCP recvmsg seq # bug: copied %X, seq %X, rcvnxt %X, fl %X\n",
 				 *seq, TCP_SKB_CB(skb)->seq, tp->rcv_nxt,
 				 flags))
 				break;
@@ -1937,7 +1939,7 @@ int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 			if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
 				goto found_fin_ok;
 			WARN(!(flags & MSG_PEEK),
-			     "recvmsg bug 2: copied %X seq %X rcvnxt %X fl %X\n",
+			     "TCP recvmsg seq # bug 2: copied %X, seq %X, rcvnxt %X, fl %X\n",
 			     *seq, TCP_SKB_CB(skb)->seq, tp->rcv_nxt, flags);
 		}
 
@@ -3660,8 +3662,7 @@ int tcp_abort(struct sock *sk, int err)
 			struct request_sock *req = inet_reqsk(sk);
 
 			local_bh_disable();
-			inet_csk_reqsk_queue_drop_and_put(req->rsk_listener,
-							  req);
+			inet_csk_reqsk_queue_drop(req->rsk_listener, req);
 			local_bh_enable();
 			return 0;
 		}

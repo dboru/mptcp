@@ -372,7 +372,6 @@ struct mptcp_options_received;
 
 void tcp_cleanup_rbuf(struct sock *sk, int copied);
 void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited);
-void tcp_enter_quickack_mode(struct sock *sk);
 int tcp_close_state(struct sock *sk);
 void tcp_minshall_update(struct tcp_sock *tp, unsigned int mss_now,
 			 const struct sk_buff *skb);
@@ -488,6 +487,7 @@ ssize_t tcp_splice_read(struct socket *sk, loff_t *ppos,
 			struct pipe_inode_info *pipe, size_t len,
 			unsigned int flags);
 
+void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks);
 static inline void tcp_dec_quickack_mode(struct sock *sk,
 					 const unsigned int pkts)
 {
@@ -681,6 +681,7 @@ void tcp_send_fin(struct sock *sk);
 void tcp_send_active_reset(struct sock *sk, gfp_t priority);
 int tcp_send_synack(struct sock *);
 void tcp_push_one(struct sock *, unsigned int mss_now);
+void __tcp_send_ack(struct sock *sk, u32 rcv_nxt);
 void tcp_send_ack(struct sock *sk);
 void tcp_send_delayed_ack(struct sock *sk);
 void tcp_send_loss_probe(struct sock *sk);
@@ -1000,6 +1001,11 @@ struct tcp_skb_cb {
  */
 static inline int tcp_v6_iif(const struct sk_buff *skb)
 {
+	return TCP_SKB_CB(skb)->header.h6.iif;
+}
+
+static inline int tcp_v6_iif_l3_slave(const struct sk_buff *skb)
+{
 	bool l3_slave = ipv6_l3mdev_skb(TCP_SKB_CB(skb)->header.h6.flags);
 
 	return l3_slave ? skb->skb_iif : TCP_SKB_CB(skb)->header.h6.iif;
@@ -1073,8 +1079,6 @@ enum tcp_ca_event {
 	CA_EVENT_LOSS,		/* loss timeout */
 	CA_EVENT_ECN_NO_CE,	/* ECT set, but not CE marked */
 	CA_EVENT_ECN_IS_CE,	/* received CE marked IP packet */
-	CA_EVENT_DELAYED_ACK,	/* Delayed ack is sent */
-	CA_EVENT_NON_DELAYED_ACK,
 };
 
 /* Information about inbound ACK, passed to cong_ops->in_ack_event() */
@@ -2240,6 +2244,10 @@ void tcp_unregister_ulp(struct tcp_ulp_ops *type);
 int tcp_set_ulp(struct sock *sk, const char *name);
 void tcp_get_available_ulp(char *buf, size_t len);
 void tcp_cleanup_ulp(struct sock *sk);
+
+#define MODULE_ALIAS_TCP_ULP(name)				\
+	__MODULE_INFO(alias, alias_userspace, name);		\
+	__MODULE_INFO(alias, alias_tcp_ulp, "tcp-ulp-" name)
 
 /* Call BPF_SOCK_OPS program that returns an int. If the return value
  * is < 0, then the BPF op failed (for example if the loaded BPF

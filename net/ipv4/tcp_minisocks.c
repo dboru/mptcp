@@ -206,8 +206,9 @@ kill:
 				inet_twsk_deschedule_put(tw);
 				return TCP_TW_SUCCESS;
 			}
+		} else {
+			inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
 		}
-		inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
 
 		if (tmp_opt.saw_tstamp) {
 			tcptw->tw_ts_recent	  = tmp_opt.rcv_tsval;
@@ -888,7 +889,7 @@ int tcp_child_process(struct sock *parent, struct sock *child,
 		 * socket does not protect us more.
 		 */
 		if (mptcp(tcp_sk(child)))
-			skb->sk = child;
+			mptcp_prepare_for_backlog(child, skb);
 		__sk_add_backlog(meta_sk, skb);
 	}
 
