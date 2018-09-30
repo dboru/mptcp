@@ -44,8 +44,8 @@
  */
 
 static int alpha_scale_den = 10;
-static int alpha_scale_num = 20;
-static int alpha_scale = 10;
+static int alpha_scale_num = 22;//20
+static int alpha_scale = 12;//10
 
 struct mdtcp {
 	/*mptcp parameters*/
@@ -58,7 +58,6 @@ struct mdtcp {
 	u32 mdtcp_alpha;
 	u32 next_seq;
 	u32 ce_state;
-	u32 delayed_ack_reserved;
 	u32 loss_cwnd;
 	ktime_t start;
 	bool debug;
@@ -140,13 +139,9 @@ static u32 mdtcp_ssthresh(struct sock *sk)
 
 	ca->loss_cwnd = tp->snd_cwnd;
 
-	// if (ntohs(inet->inet_sport) != 5001) {
-	// 	printk("ktime: %lu.%09lu cwnd: %u dctcp-alfa: %u srcip %pI4/%u dstip %pI4/%u rtt: %u ssthresh %u\n",
-	// 	       (unsigned long) tv.tv_sec, (unsigned long) tv.tv_nsec, tp->snd_cwnd, ca->mdtcp_alpha, &inet->inet_saddr,
-	// 	       ntohs(inet->inet_sport), &inet->inet_daddr,
-	// 	       ntohs(inet->inet_dport), tp->srtt_us >> 3, max(tp->snd_cwnd - ((tp->snd_cwnd * ca->mdtcp_alpha) >> 11U), 2U));
-	// }
-
+         if (mpcb && mpcb->cnt_established > 1) {
+        	return max(tp->snd_cwnd - ((6*tp->snd_cwnd * ca->mdtcp_alpha/5) >> 11U), 2U);
+	}	
 	return max(tp->snd_cwnd - ((tp->snd_cwnd * ca->mdtcp_alpha) >> 11U), 2U);
 }
 
@@ -161,58 +156,41 @@ static void mdtcp_ce_state_0_to_1(struct sock *sk)
 	struct mdtcp *ca = inet_csk_ca(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	/* State has changed from CE=0 to CE=1 and delayed
-	 * ACK has not sent yet.
-	 */
-	if (!ca->ce_state && ca->delayed_ack_reserved) {
-		u32 tmp_rcv_nxt;
-
-		/* Save current rcv_nxt. */
-		tmp_rcv_nxt = tp->rcv_nxt;
-
-		/* Generate previous ack with CE=0. */
-		tp->ecn_flags &= ~TCP_ECN_DEMAND_CWR;
-		tp->rcv_nxt = ca->prior_rcv_nxt;
-
-		tcp_send_ack(sk);
-
-		/* Recover current rcv_nxt. */
-		tp->rcv_nxt = tmp_rcv_nxt;
+        if (!ca->ce_state) {
+		/* State has changed from CE=0 to CE=1, force an immediate
+		 * ACK to reflect the new CE state. If an ACK was delayed,
+		 * send that first to reflect the prior CE state.
+		 */
+		if (inet_csk(sk)->icsk_ack.pending & ICSK_ACK_TIMER)
+			__tcp_send_ack(sk, ca->prior_rcv_nxt);
+		tcp_enter_quickack_mode(sk, 1);
 	}
+       
+       ca->prior_rcv_nxt = tp->rcv_nxt;
+       ca->ce_state = 1;
+       tp->ecn_flags |= TCP_ECN_DEMAND_CWR;
 
-	ca->prior_rcv_nxt = tp->rcv_nxt;
-	ca->ce_state = 1;
-	tp->ecn_flags |= TCP_ECN_DEMAND_CWR;
 }
 
 static void mdtcp_ce_state_1_to_0(struct sock *sk)
 {
 	struct mdtcp *ca = inet_csk_ca(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
-
-	/* State has changed from CE=1 to CE=0 and delayed
-	 * ACK has not sent yet.
-	 */
-	if (ca->ce_state && ca->delayed_ack_reserved) {
-		u32 tmp_rcv_nxt;
-
-		/* Save current rcv_nxt. */
-		tmp_rcv_nxt = tp->rcv_nxt;
-
-		/* Generate previous ack with CE=1. */
-		tp->ecn_flags |= TCP_ECN_DEMAND_CWR;
-		tp->rcv_nxt = ca->prior_rcv_nxt;
-
-		tcp_send_ack(sk);
-
-		/* Recover current rcv_nxt. */
-		tp->rcv_nxt = tmp_rcv_nxt;
+        
+        if (ca->ce_state) {
+		/* State has changed from CE=1 to CE=0, force an immediate
+		 * ACK to reflect the new CE state. If an ACK was delayed,
+		 * send that first to reflect the prior CE state.
+		 */
+		if (inet_csk(sk)->icsk_ack.pending & ICSK_ACK_TIMER)
+			__tcp_send_ack(sk, ca->prior_rcv_nxt);
+		tcp_enter_quickack_mode(sk, 1);
 	}
 
 	ca->prior_rcv_nxt = tp->rcv_nxt;
 	ca->ce_state = 0;
-
 	tp->ecn_flags &= ~TCP_ECN_DEMAND_CWR;
+
 }
 
 
@@ -276,28 +254,6 @@ static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 
 }
 
-static void mdtcp_update_ack_reserved(struct sock *sk, enum tcp_ca_event ev)
-
-{
-	struct mdtcp *ca = inet_csk_ca(sk);
-
-	switch (ev) {
-		case CA_EVENT_DELAYED_ACK:
-			if (!ca->delayed_ack_reserved)
-				ca->delayed_ack_reserved = 1;
-			break;
-		case CA_EVENT_NON_DELAYED_ACK:
-			if (ca->delayed_ack_reserved)
-				ca->delayed_ack_reserved = 0;
-			break;
-		default:
-			/* Don't care for the rest. */
-			break;
-	}
-}
-
-
-
 static u32 mdtcp_cwnd_undo(struct sock *sk)
 {
 	const struct mdtcp *ca = inet_csk_ca(sk);
@@ -317,7 +273,7 @@ static void mdtcp_recalc_alpha(const struct sock *sk)
 {
 	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
 	const struct sock *sub_sk;
-	int min_rtt = 1, can_send = 0;
+	int min_rtt = 0, can_send = 0;
 	u64  sum_denominator = 0, alpha = 1;
 	struct inet_sock *inet = inet_sk(sk);
 	struct mdtcp *ca = inet_csk_ca(sk);
@@ -343,7 +299,7 @@ static void mdtcp_recalc_alpha(const struct sock *sk)
 		 * Integer-overflow is not possible here, because
 		 * tmp will be in u64.
 		 */
-		if (min_rtt == 1 || sub_tp->srtt_us < min_rtt)
+		if (min_rtt == 0 || sub_tp->srtt_us < min_rtt)
 			min_rtt = sub_tp->srtt_us;
 	}
 
@@ -405,7 +361,7 @@ static void mdtcp_init(struct sock *sk)
 		ca->prior_snd_una = tp->snd_una;
 		ca->prior_rcv_nxt = tp->rcv_nxt;
 		ca->mdtcp_alpha = min(mdtcp_alpha_on_init, MDTCP_MAX_ALPHA);
-		ca->delayed_ack_reserved = 0;
+		
 		ca->loss_cwnd = 0;
 		ca->ce_state = 0;
 		ca->debug=mdtcp_debug;
@@ -524,11 +480,7 @@ static void mdtcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 		case CA_EVENT_ECN_NO_CE:
 			mdtcp_ce_state_1_to_0(sk);
 			break;
-		case CA_EVENT_DELAYED_ACK:
-		case CA_EVENT_NON_DELAYED_ACK:
-			mdtcp_update_ack_reserved(sk, ev);
-			break;
-		default:
+	        default:
 			/* Don't care for the rest. */
 			break;
 	}

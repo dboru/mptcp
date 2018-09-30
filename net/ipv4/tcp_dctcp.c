@@ -229,28 +229,7 @@ static void dctcp_state(struct sock *sk, u8 new_state)
 		ca->dctcp_alpha = DCTCP_MAX_ALPHA;
 	}
 }
-<<<<<<< HEAD
-static void dctcp_update_ack_reserved(struct sock *sk, enum tcp_ca_event ev)
 
-{
-	struct dctcp *ca = inet_csk_ca(sk);
-
-	switch (ev) {
-	case CA_EVENT_DELAYED_ACK:
-		if (!ca->delayed_ack_reserved)
-			ca->delayed_ack_reserved = 1;
-		break;
-	case CA_EVENT_NON_DELAYED_ACK:
-		if (ca->delayed_ack_reserved)
-			ca->delayed_ack_reserved = 0;
-		break;
-	default:
-		/* Don't care for the rest. */
-		break;
-	}
-}
-=======
->>>>>>> 9fa4190e842f993518f699a753d2a8e35efbf20c
 
 static void dctcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 {
