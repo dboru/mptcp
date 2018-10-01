@@ -139,9 +139,9 @@ static u32 mdtcp_ssthresh(struct sock *sk)
 
 	ca->loss_cwnd = tp->snd_cwnd;
 
-         if (mpcb && mpcb->cnt_established > 1) {
-        	return max(tp->snd_cwnd - ((6*tp->snd_cwnd * ca->mdtcp_alpha/5) >> 11U), 2U);
-	}	
+         //if (mpcb && mpcb->cnt_established > 1) {
+        //	return max(tp->snd_cwnd - ((6*tp->snd_cwnd * ca->mdtcp_alpha/5) >> 11U), 2U);
+	//}	
 	return max(tp->snd_cwnd - ((tp->snd_cwnd * ca->mdtcp_alpha) >> 11U), 2U);
 }
 
