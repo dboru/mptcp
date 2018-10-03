@@ -130,8 +130,8 @@ static u32 mdtcp_ssthresh(struct sock *sk)
 {
 	struct mdtcp *ca = inet_csk_ca(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
-	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
-	const struct sock *sub_sk;
+	//const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
+	//const struct sock *sub_sk;
 
 	// struct inet_sock *inet = inet_sk(sk);
 	// struct timespec tv = ktime_to_timespec(ktime_sub(ktime_get(), ca->start));
@@ -163,7 +163,8 @@ static void mdtcp_ce_state_0_to_1(struct sock *sk)
 		 */
 		if (inet_csk(sk)->icsk_ack.pending & ICSK_ACK_TIMER)
 			__tcp_send_ack(sk, ca->prior_rcv_nxt);
-		tcp_enter_quickack_mode(sk, 1);
+                inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
+		//tcp_enter_quickack_mode(sk, 1);
 	}
        
        ca->prior_rcv_nxt = tp->rcv_nxt;
@@ -184,7 +185,8 @@ static void mdtcp_ce_state_1_to_0(struct sock *sk)
 		 */
 		if (inet_csk(sk)->icsk_ack.pending & ICSK_ACK_TIMER)
 			__tcp_send_ack(sk, ca->prior_rcv_nxt);
-		tcp_enter_quickack_mode(sk, 1);
+                inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
+		//tcp_enter_quickack_mode(sk, 1);
 	}
 
 	ca->prior_rcv_nxt = tp->rcv_nxt;
@@ -202,9 +204,8 @@ static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct mdtcp *ca = inet_csk_ca(sk);
 	u32 acked_bytes = tp->snd_una - ca->prior_snd_una;
-	struct inet_sock *inet = inet_sk(sk);
-	struct timespec tv = ktime_to_timespec(ktime_sub(ktime_get(), ca->start));
-	// const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
+	//struct inet_sock *inet = inet_sk(sk);
+	//struct timespec tv = ktime_to_timespec(ktime_sub(ktime_get(), ca->start));
 
 	/* If ack did not advance snd_una, count dupack as MSS size.
 	 * If ack did update window, do not count it at all.
@@ -233,7 +234,7 @@ static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 			alpha = min(alpha + (u32)bytes_ecn, MDTCP_MAX_ALPHA);
 		}
 
-		tp->mdtcp_cong_estimate = alpha;
+		//tp->mdtcp_cong_estimate = alpha;
 		/* mdtcp_alpha can be read from mdtcp_get_info() without
 		 * synchro, so we ask compiler to not use mdtcp_alpha
 		 * as a temporary variable in prior operations.
@@ -243,12 +244,12 @@ static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 	}
 
 
-	if (ntohs(inet->inet_sport) != 5001 && ca->debug) {
-		printk("ktime: %lu.%09lu cwnd: %u dctcp-alfa: %u srcip %pI4/%u dstip %pI4/%u rtt: %u cong_est %u\n",
+	/*if (ntohs(inet->inet_sport) != 5001 && ca->debug) {
+		printk("ktime: %lu.%09lu cwnd: %u dctcp-alfa: %u srcip %pI4/%u dstip %pI4/%u rtt: %u \n",
 				(unsigned long) tv.tv_sec, (unsigned long) tv.tv_nsec, tp->snd_cwnd, ca->mdtcp_alpha, &inet->inet_saddr,
 				ntohs(inet->inet_sport), &inet->inet_daddr,
-				ntohs(inet->inet_dport), tp->srtt_us >> 3,tp->mdtcp_cong_estimate);
-	}
+				ntohs(inet->inet_dport), tp->srtt_us >> 3);
+	} */
 
 	
 
@@ -266,18 +267,15 @@ static inline void mdtcp_set_forced(const struct sock *meta_sk, bool force)
 	((struct mdtcp *)inet_csk_ca(meta_sk))->forced_update = force;
 }
 
-
-
-
 static void mdtcp_recalc_alpha(const struct sock *sk)
 {
 	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
 	const struct sock *sub_sk;
 	int min_rtt = 0, can_send = 0;
 	u64  sum_denominator = 0, alpha = 1;
-	struct inet_sock *inet = inet_sk(sk);
-	struct mdtcp *ca = inet_csk_ca(sk);
-	struct timespec tv = ktime_to_timespec(ktime_sub(ktime_get(), ca->start));
+	//struct inet_sock *inet = inet_sk(sk);
+	//struct mdtcp *ca = inet_csk_ca(sk);
+	//struct timespec tv = ktime_to_timespec(ktime_sub(ktime_get(), ca->start));
 
 	if (!mpcb)
 	   return;
@@ -285,20 +283,20 @@ static void mdtcp_recalc_alpha(const struct sock *sk)
 	 * (set alpha to 1)
 	 */
 	if (mpcb->cnt_established <= 1)
-		goto exit;
+	     goto exit;
 
 	/* Do regular alpha-calculation for multiple subflows */
 	/* Find the max numerator of the alpha-calculation */
 	mptcp_for_each_sk(mpcb, sub_sk) {
 		struct tcp_sock *sub_tp = tcp_sk(sub_sk);
-		if (!mdtcp_sk_can_send(sub_sk))
-			continue;
+		
+                if (!mdtcp_sk_can_send(sub_sk))
+		   continue;
+
 		can_send++;
 
-		/* We need to look for the path, that provides the max-value.
-		 * Integer-overflow is not possible here, because
-		 * tmp will be in u64.
-		 */
+		/* We need to look for the path, that provides the minimum RTT*/
+
 		if (min_rtt == 0 || sub_tp->srtt_us < min_rtt)
 			min_rtt = sub_tp->srtt_us;
 	}
@@ -330,14 +328,11 @@ static void mdtcp_recalc_alpha(const struct sock *sk)
 
 	alpha = div64_u64(mdtcp_scale(1, alpha_scale_num), sum_denominator);
 
-	// alpha = div64_u64(mdtcp_scale(best_cwnd, alpha_scale_num),sum_denominator);
-
-	if (ntohs(inet->inet_sport) != 5001 && ca->debug) {
+	/*if (ntohs(inet->inet_sport) != 5001 && ca->debug) {
 		printk("ktime: %lu.%09lu mpalfa: %llu  srcip %pI4/%u dstip %pI4/%u sub %u\n",
-				(unsigned long) tv.tv_sec, (unsigned long) tv.tv_nsec, alpha, &inet->inet_saddr,
-				ntohs(inet->inet_sport), &inet->inet_daddr,
-				ntohs(inet->inet_dport), mpcb->cnt_subflows);
-	}
+			(unsigned long) tv.tv_sec, (unsigned long) tv.tv_nsec, alpha, &inet->inet_saddr,
+			ntohs(inet->inet_sport), &inet->inet_daddr,ntohs(inet->inet_dport), mpcb->cnt_subflows);
+	}*/
 
 	if (unlikely(!alpha))
 		alpha = 1;	
@@ -396,6 +391,25 @@ static void mdtcp_state(struct sock *sk, u8 ca_state)
 	}
 }
 
+/* In theory this is tp->snd_cwnd += 1 / tp->snd_cwnd (or alternative w),
+ * for every packet that was ACKed.
+ */
+void mdtcp_cong_avoid_ai(struct tcp_sock *tp, u32 w, u32 acked)
+{
+	/* If credits accumulated at a higher w, apply them gently now. */
+	if (tp->snd_cwnd_cnt >= w) {
+		tp->snd_cwnd_cnt = 0;
+		tp->snd_cwnd++;
+	}
+
+	tp->snd_cwnd_cnt += acked;
+	if (tp->snd_cwnd_cnt >= w) {
+		u32 delta = tp->snd_cwnd_cnt / w;
+		tp->snd_cwnd_cnt -= delta * w;
+		tp->snd_cwnd += delta;
+	}
+	tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp);
+}
 
 static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
@@ -414,13 +428,14 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (!tcp_is_cwnd_limited(sk))
 		return;
-
 	if (tcp_in_slow_start(tp)) {
 		/* In "safe" area, increase. */
-		tcp_slow_start(tp, acked);
-		// mdtcp_compute_cwnd_total(sk);
-		mdtcp_recalc_alpha(sk);
-		return;
+		acked = tcp_slow_start(tp, acked);
+		if(!acked) {
+                   if(mpcb->cnt_established>1)
+                   mdtcp_recalc_alpha(sk);
+                   return;
+                }               
 	}
 
 	if (mdtcp_get_forced(mptcp_meta_sk(sk))) {
@@ -441,31 +456,16 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		if (snd_cwnd < tp->snd_cwnd)
 			snd_cwnd = tp->snd_cwnd;
 	}
-	else {
-		//tcp_reno_cong_avoid(sk, ack, acked);
-		snd_cwnd = tp->snd_cwnd;
-          }
+	else 
+	    snd_cwnd = tp->snd_cwnd;
+          
 
-	old_cwnd = tp->snd_cwnd;
-	tcp_cong_avoid_ai(tp, snd_cwnd, acked);
+     old_cwnd = tp->snd_cwnd;
+     mdtcp_cong_avoid_ai(tp, snd_cwnd, acked);
 
-	if (old_cwnd < tp->snd_cwnd && mpcb->cnt_established > 1)
-		mdtcp_recalc_alpha(sk);
-	/*
-	   if (mpcb->cnt_established > 1) {
-	   if (tp->snd_cwnd_cnt >= snd_cwnd) {
-	   if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
-	   tp->snd_cwnd++;
+     if (old_cwnd < tp->snd_cwnd && mpcb->cnt_established > 1)
 	   mdtcp_recalc_alpha(sk);
-	   }
-
-	   tp->snd_cwnd_cnt = 0;
-	   } else {
-
-	   tp->snd_cwnd_cnt++;
-	   }
-	   }
-	 */
+	
 
   }
 
@@ -474,6 +474,7 @@ static void mdtcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 	switch (ev) {
 		case CA_EVENT_LOSS:
 			mdtcp_recalc_alpha(sk);
+                        break;
 		case CA_EVENT_ECN_IS_CE:
 			mdtcp_ce_state_0_to_1(sk);
 			break;
