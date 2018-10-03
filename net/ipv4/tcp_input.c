@@ -220,10 +220,18 @@ static void tcp_ecn_queue_cwr(struct tcp_sock *tp)
 		tp->ecn_flags |= TCP_ECN_QUEUE_CWR;
 }
 
-static void tcp_ecn_accept_cwr(struct tcp_sock *tp, const struct sk_buff *skb)
+static void tcp_ecn_accept_cwr(struct sock *sk, const struct sk_buff *skb)
 {
-	if (tcp_hdr(skb)->cwr)
-		tp->ecn_flags &= ~TCP_ECN_DEMAND_CWR;
+	if (tcp_hdr(skb)->cwr) {
+		//tp->ecn_flags &= ~TCP_ECN_DEMAND_CWR;
+                tcp_sk(sk)->ecn_flags &= ~TCP_ECN_DEMAND_CWR;
+               /* If the sender is telling us it has entered CWR, then its
+ 		 * cwnd may be very low (even just 1 packet), so we should ACK
+ 		 * immediately.
+ 		 */
+                
+		inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
+          }
 }
 
 static void tcp_ecn_withdraw_cwr(struct tcp_sock *tp)
@@ -4762,7 +4770,7 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 	skb_dst_drop(skb);
 	__skb_pull(skb, tcp_hdr(skb)->doff * 4);
 
-	tcp_ecn_accept_cwr(tp, skb);
+	tcp_ecn_accept_cwr(sk, skb);
 
 	tp->rx_opt.dsack = 0;
 
@@ -5220,30 +5228,40 @@ static inline void tcp_data_snd_check(struct sock *sk)
 	tcp_check_space(sk);
 }
 
+
 /*
  * Check if sending an ack is needed.
  */
 static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-
+	
 	    /* More than one full frame received... */
 	if (((tp->rcv_nxt - tp->rcv_wup) > inet_csk(sk)->icsk_ack.rcv_mss &&
 	     /* ... and right edge of window advances far enough.
-	      * (tcp_recvmsg() will send ACK otherwise). Or...
+	      * (tcp_recvmsg() will send ACK otherwise).
+	      * If application uses SO_RCVLOWAT, we want send ack now if
+	      * we have not received enough bytes to satisfy the condition.
 	      */
-	     tp->ops->__select_window(sk) >= tp->rcv_wnd) ||
+	    (tp->rcv_nxt - tp->copied_seq < sk->sk_rcvlowat ||
+	     __tcp_select_window(sk) >= tp->rcv_wnd)) ||
 	    /* We ACK each frame or... */
 	    tcp_in_quickack_mode(sk) ||
-	    /* We have out of order data. */
-	    (ofo_possible && !RB_EMPTY_ROOT(&tp->out_of_order_queue))) {
-		/* Then ack it now */
+	    /* Protocol state mandates a one-time immediate ACK */
+	    inet_csk(sk)->icsk_ack.pending & ICSK_ACK_NOW) {
 		tcp_send_ack(sk);
-	} else {
-		/* Else, send delayed ack. */
-		tcp_send_delayed_ack(sk);
+		return;
 	}
+
+	if (!ofo_possible || RB_EMPTY_ROOT(&tp->out_of_order_queue)) {
+		tcp_send_delayed_ack(sk);
+		return;
+	}
+
+	     
 }
+
+
 
 static inline void tcp_ack_snd_check(struct sock *sk)
 {
