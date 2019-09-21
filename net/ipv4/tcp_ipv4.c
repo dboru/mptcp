@@ -1746,6 +1746,9 @@ bool tcp_add_backlog(struct sock *sk, struct sk_buff *skb)
 		 */
 		thtail->fin |= th->fin;
 		TCP_SKB_CB(tail)->tcp_flags |= TCP_SKB_CB(skb)->tcp_flags;
+                TCP_SKB_CB(tail)->tcp_res_flags |= TCP_SKB_CB(skb)->tcp_res_flags;
+		if (tcp_sk(sk)->ecn_flags & TCP_ACCECN_OK)
+			tcp_accecn_copy_skb_cb_ace(tail, skb);
 
 		if (TCP_SKB_CB(skb)->has_rxtstamp) {
 			TCP_SKB_CB(tail)->has_rxtstamp = true;
@@ -1817,7 +1820,8 @@ static void tcp_v4_fill_cb(struct sk_buff *skb, const struct iphdr *iph,
 	TCP_SKB_CB(skb)->dss_off = 0;
 #endif
 	TCP_SKB_CB(skb)->tcp_flags = tcp_flag_byte(th);
-	TCP_SKB_CB(skb)->tcp_tw_isn = 0;
+	TCP_SKB_CB(skb)->tcp_res_flags = tcp_res_flag_byte(th);
+        TCP_SKB_CB(skb)->tcp_tw_isn = 0;
 	TCP_SKB_CB(skb)->ip_dsfield = ipv4_get_dsfield(iph);
 	TCP_SKB_CB(skb)->sacked	 = 0;
 	TCP_SKB_CB(skb)->has_rxtstamp =

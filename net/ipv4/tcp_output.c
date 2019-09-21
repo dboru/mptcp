@@ -322,7 +322,14 @@ static void tcp_ecn_send_synack(struct sock *sk, struct sk_buff *skb)
 		TCP_SKB_CB(skb)->tcp_flags &= ~TCPHDR_ECE;
 	else if (tcp_ca_needs_ecn(sk) ||
 		 tcp_bpf_ca_needs_ecn(sk))
-		INET_ECN_xmit(sk);
+		__INET_ECN_xmit(sk, tcp_ca_wants_ect_1(sk));
+	/* Check if we want to negotiate AccECN */
+	if (tp->ecn_flags & TCP_ACCECN_OK) {
+		TCP_SKB_CB(skb)->tcp_flags &= ~TCPHDR_ECE;
+		TCP_SKB_CB(skb)->tcp_flags |= TCPHDR_CWR;
+		/* TODO(otilmans) We should feed back here the real ECT state */
+		TCP_SKB_CB(skb)->tcp_res_flags |= TCPHDR_AE;
+	}
 }
 
 /* Packet ECN state for a SYN.  */
@@ -331,6 +338,7 @@ static void tcp_ecn_send_syn(struct sock *sk, struct sk_buff *skb)
 	struct tcp_sock *tp = tcp_sk(sk);
 	bool bpf_needs_ecn = tcp_bpf_ca_needs_ecn(sk);
 	bool use_ecn = sock_net(sk)->ipv4.sysctl_tcp_ecn == 1 ||
+		sock_net(sk)->ipv4.sysctl_tcp_ecn == 3 ||
 		tcp_ca_needs_ecn(sk) || bpf_needs_ecn;
 
 	if (!use_ecn) {
@@ -345,25 +353,47 @@ static void tcp_ecn_send_syn(struct sock *sk, struct sk_buff *skb)
 	if (use_ecn) {
 		TCP_SKB_CB(skb)->tcp_flags |= TCPHDR_ECE | TCPHDR_CWR;
 		tp->ecn_flags = TCP_ECN_OK;
+		if (sock_net(sk)->ipv4.sysctl_tcp_ecn == 3) {
+			/* Request AccECN */
+			TCP_SKB_CB(skb)->tcp_res_flags |= TCPHDR_AE;
+			tp->ecn_flags |= TCP_ACCECN_OK;
+		}
 		if (tcp_ca_needs_ecn(sk) || bpf_needs_ecn)
-			INET_ECN_xmit(sk);
+			__INET_ECN_xmit(sk, tcp_ca_wants_ect_1(sk));
 	}
 }
 
 static void tcp_ecn_clear_syn(struct sock *sk, struct sk_buff *skb)
 {
-	if (sock_net(sk)->ipv4.sysctl_tcp_ecn_fallback)
+	if (sock_net(sk)->ipv4.sysctl_tcp_ecn_fallback) {
 		/* tp->ecn_flags are cleared at a later point in time when
 		 * SYN ACK is ultimatively being received.
 		 */
 		TCP_SKB_CB(skb)->tcp_flags &= ~(TCPHDR_ECE | TCPHDR_CWR);
+		TCP_SKB_CB(skb)->tcp_res_flags &= ~TCPHDR_AE;
+	}
 }
 
 static void
 tcp_ecn_make_synack(const struct request_sock *req, struct tcphdr *th)
 {
-	if (inet_rsk(req)->ecn_ok)
+	if (inet_rsk(req)->accecn_ok) {
+		th->ece = 0;
+		th->cwr = 1;
+		th->ae = req->ce_marked;
+		/* TODO(otilmans) we need to feed back ECT state here */
+	} else if (inet_rsk(req)->ecn_ok)
 		th->ece = 1;
+}
+
+static void tcp_accecn_set_ace(struct tcphdr *th, struct tcp_sock *tp)
+{
+	u32 diff = tp->received_ce - tp->received_ce_tx;
+
+	tp->received_ce_tx += min_t(u32, diff, TCP_ACCECN_CEP_MAX_DELTA);
+	th->ece = tp->received_ce_tx;
+	th->cwr = tp->received_ce_tx >> 1;
+	th->ae = tp->received_ce_tx >> 2;
 }
 
 /* Set up ECN state for a packet on a ESTABLISHED socket that is about to
@@ -375,21 +405,28 @@ static void tcp_ecn_send(struct sock *sk, struct sk_buff *skb,
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	if (tp->ecn_flags & TCP_ECN_OK) {
-		/* Not-retransmitted data segment: set ECT and inject CWR. */
-		if (skb->len != tcp_header_len &&
-		    !before(TCP_SKB_CB(skb)->seq, tp->snd_nxt)) {
-			INET_ECN_xmit(sk);
-			if (tp->ecn_flags & TCP_ECN_QUEUE_CWR) {
-				tp->ecn_flags &= ~TCP_ECN_QUEUE_CWR;
-				th->cwr = 1;
-				skb_shinfo(skb)->gso_type |= SKB_GSO_TCP_ECN;
+		/* We need to check everytime as the CA could change
+		 * and/or decide to fallback to ECT(0) */
+		__INET_ECN_xmit(sk, tp->ecn_flags & TCP_ECN_ECT_1);
+		if (tp->ecn_flags & TCP_ACCECN_OK) {
+			tcp_accecn_set_ace(th, tp);
+			skb_shinfo(skb)->gso_type |= SKB_GSO_TCP_ACCECN;
+		} else {
+			/* Not-retransmitted data segment: set ECT and inject CWR. */
+			if (skb->len != tcp_header_len &&
+			    !before(TCP_SKB_CB(skb)->seq, tp->snd_nxt)) {
+				if (tp->ecn_flags & TCP_ECN_QUEUE_CWR) {
+					tp->ecn_flags &= ~TCP_ECN_QUEUE_CWR;
+					th->cwr = 1;
+					skb_shinfo(skb)->gso_type |= SKB_GSO_TCP_ECN;
+				}
+			} else if (!tcp_ca_needs_ecn(sk)) {
+				/* ACK or retransmitted segment: clear ECT|CE */
+				INET_ECN_dontxmit(sk);
 			}
-		} else if (!tcp_ca_needs_ecn(sk)) {
-			/* ACK or retransmitted segment: clear ECT|CE */
-			INET_ECN_dontxmit(sk);
+			if (tp->ecn_flags & TCP_ECN_DEMAND_CWR)
+				th->ece = 1;
 		}
-		if (tp->ecn_flags & TCP_ECN_DEMAND_CWR)
-			th->ece = 1;
 	}
 }
 
@@ -1129,7 +1166,8 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	th->dest		= inet->inet_dport;
 	th->seq			= htonl(tcb->seq);
 	th->ack_seq		= htonl(rcv_nxt);
-	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
+	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) | 
+                                        (tcb->tcp_res_flags & 0x0F) << 8 |
 					tcb->tcp_flags);
 
 	th->check		= 0;
@@ -1202,6 +1240,11 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 		tcp_update_skb_after_send(sk, oskb, prior_wstamp);
 		tcp_rate_skb_sent(sk, oskb);
 	}
+        if ((tp->ecn_flags & TCP_ACCECN_OK)
+	    && tp->received_ce_tx != tp->received_ce)
+		/* Ensure we'll eventually send the final received_ce value */
+		tcp_send_delayed_ack(sk);
+
 	return err;
 }
 
@@ -1358,6 +1401,7 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	flags = TCP_SKB_CB(skb)->tcp_flags;
 	TCP_SKB_CB(skb)->tcp_flags = flags & ~(TCPHDR_FIN | TCPHDR_PSH);
 	TCP_SKB_CB(buff)->tcp_flags = flags;
+        TCP_SKB_CB(buff)->tcp_res_flags = TCP_SKB_CB(skb)->tcp_res_flags;
 	TCP_SKB_CB(buff)->sacked = TCP_SKB_CB(skb)->sacked;
 	tcp_skb_fragment_eor(skb, buff);
 
@@ -1762,6 +1806,9 @@ static u32 tcp_tso_segs(struct sock *sk, unsigned int mss_now)
 			sock_net(sk)->ipv4.sysctl_tcp_min_tso_segs;
 
 	tso_segs = tcp_tso_autosize(sk, mss_now, min_tso);
+        if (ca_ops->max_tso_segs)
+		tso_segs = min_t(u32, tso_segs, ca_ops->max_tso_segs(sk));
+
 	return min_t(u32, tso_segs, sk->sk_gso_max_segs);
 }
 
@@ -2208,6 +2255,10 @@ static int tcp_mtu_probe(struct sock *sk)
 			}
 			TCP_SKB_CB(skb)->seq += copy;
 		}
+
+                TCP_SKB_CB(nskb)->tcp_res_flags |= TCP_SKB_CB(skb)->tcp_res_flags;
+		if (tp->ecn_flags & TCP_ACCECN_OK)
+			tcp_accecn_copy_skb_cb_ace(skb, nskb);
 
 		len += copy;
 

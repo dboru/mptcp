@@ -2727,7 +2727,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tp->snd_cwnd = 2;
 	icsk->icsk_probes_out = 0;
 	tp->window_clamp = 0;
-
+        tp->delivered_ce = 0;
 	tcp_reset_vars(sk);
 
 	tcp_set_ca_state(sk, TCP_CA_Open);
@@ -2893,8 +2893,10 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		name[val] = 0;
 
 		lock_sock(sk);
-		err = tcp_set_congestion_control(sk, name, true, true);
-		release_sock(sk);
+		err = tcp_set_congestion_control(sk, name, true, true,
+						 ns_capable(sock_net(sk)->user_ns,
+							    CAP_NET_ADMIN));
+                release_sock(sk);
 		return err;
 	}
 	case TCP_ULP: {
