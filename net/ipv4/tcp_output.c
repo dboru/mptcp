@@ -1710,16 +1710,21 @@ void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited)
 		/* Network is feed fully. */
 		tp->snd_cwnd_used = 0;
 		tp->snd_cwnd_stamp = tcp_jiffies32;
+
 	} else {
 		/* Network starves. */
 		if (tp->packets_out > tp->snd_cwnd_used)
+                     {
 			tp->snd_cwnd_used = tp->packets_out;
-
+                       
+                    }
 		if (sock_net(sk)->ipv4.sysctl_tcp_slow_start_after_idle &&
 		    (s32)(tcp_jiffies32 - tp->snd_cwnd_stamp) >= inet_csk(sk)->icsk_rto &&
 		    !ca_ops->cong_control)
+                     {
+                        
 			tcp_cwnd_application_limited(sk);
-
+                    }
 		/* The following conditions together indicate the starvation
 		 * is caused by insufficient sender buffer:
 		 * 1) just sent some data (see tcp_write_xmit)
@@ -1729,8 +1734,9 @@ void tcp_cwnd_validate(struct sock *sk, bool is_cwnd_limited)
 		 */
 		if (tcp_write_queue_empty(sk) && sk->sk_socket &&
 		    test_bit(SOCK_NOSPACE, &sk->sk_socket->flags) &&
-		    (1 << sk->sk_state) & (TCPF_ESTABLISHED | TCPF_CLOSE_WAIT))
+		    (1 << sk->sk_state) & (TCPF_ESTABLISHED | TCPF_CLOSE_WAIT)) {
 			tcp_chrono_start(sk, TCP_CHRONO_SNDBUF_LIMITED);
+                  }
 	}
 }
 
@@ -1806,9 +1812,10 @@ static u32 tcp_tso_segs(struct sock *sk, unsigned int mss_now)
 			sock_net(sk)->ipv4.sysctl_tcp_min_tso_segs;
 
 	tso_segs = tcp_tso_autosize(sk, mss_now, min_tso);
-        if (ca_ops->max_tso_segs)
+        if (ca_ops->max_tso_segs) {
+                //printk("tso_segs %u prague tso_burst %u \n",tso_segs,ca_ops->max_tso_segs(sk));
 		tso_segs = min_t(u32, tso_segs, ca_ops->max_tso_segs(sk));
-
+             }
 	return min_t(u32, tso_segs, sk->sk_gso_max_segs);
 }
 

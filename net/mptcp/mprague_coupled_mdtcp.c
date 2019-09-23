@@ -29,27 +29,27 @@
 #include <net/mptcp.h>
 #include <linux/inet_diag.h>
 #include <linux/inet.h>
+#include "mprague_coupled.h"
 
-#define MPRAGUE_ALPHA_BITS   31
-#define MPRAGUE_MAX_ALPHA    (1U << MPRAGUE_ALPHA_BITS)
+//#define MPRAGUE_ALPHA_BITS   31
+//#define MPRAGUE_MAX_ALPHA    (1U << MPRAGUE_ALPHA_BITS)
+#define MPRAGUE_MAX_ALPHA   1024U 
 
 static struct tcp_congestion_ops mprague_reno;
 
 struct mprague {
-    u64  beta;
-    bool forced_update;
-    u64 upscaled_alpha;
-    u32 delivered;
-    u32 delivered_ce;
-    u32 acked_bytes_ecn;
-    u32 acked_bytes_total;
-    u32 prior_snd_una;
-    u32 prior_rcv_nxt;
-    u32 next_seq;
-    u32 loss_cwnd;
-    u32 max_tso_burst;
-    bool was_ce;
+        u64  beta;
+        bool forced_update;
+        u32 old_delivered;
+        u32 old_delivered_ce;
+        u32 prior_rcv_nxt;
+        u32 upscaled_alpha;
+        u32 next_seq;
+        u32 ce_state;
+        u32 loss_cwnd;
+        u32 max_tso_burst;
 };
+
 
 
 static unsigned int mprague_shift_g __read_mostly = 4; /* g = 1/2^4 */
@@ -111,113 +111,135 @@ static u32 mprague_max_tso_seg(struct sock *sk)
     return mprague_ca(sk)->max_tso_burst;
 }
 
-static bool mprague_rtt_complete(struct sock *sk)
-{
-    /* At the moment, we detect expired RTT using cwnd completion */
-    return !before(tcp_sk(sk)->snd_una, mprague_ca(sk)->next_seq);
-}
-
-static void __mprague_connection_id(struct sock *sk, char *str, size_t len)
-{
-    u16 dport = ntohs(inet_sk(sk)->inet_dport),
-        sport = ntohs(inet_sk(sk)->inet_sport);
-    if (sk->sk_family == AF_INET)
-        snprintf(str, len, "%pI4:%u-%pI4:%u", &sk->sk_rcv_saddr, sport,
-            &sk->sk_daddr, dport);
-    else if (sk->sk_family == AF_INET6)
-        snprintf(str, len, "[%pI6c]:%u-[%pI6c]:%u",
-             &sk->sk_v6_rcv_saddr, sport, &sk->sk_v6_daddr, dport);
-}
-#define LOG(sk, fmt, ...) do { \
-    char __tmp[2 * (INET6_ADDRSTRLEN + 9) + 1] = {0}; \
-    __mprague_connection_id(sk, __tmp, sizeof(__tmp)); \
-    pr_info("MPrague %s " fmt, __tmp, ##__VA_ARGS__); \
-} while (0)
-
 static void mprague_reset(const struct tcp_sock *tp, struct mprague *ca)
 {
-    ca->next_seq = tp->snd_nxt;
-    ca->acked_bytes_ecn = 0;
-    ca->acked_bytes_total = 0;
-    ca->delivered_ce = tp->delivered_ce;
-    ca->delivered = tp->delivered;
-    ca->was_ce = false;
+   
+
+ ca->next_seq = tp->snd_nxt;
+ ca->old_delivered = tp->delivered;
+ ca->old_delivered_ce = tp->delivered_ce;
+
+
 }
 
 static u32 mprague_ssthresh(struct sock *sk)
 {
-    struct mprague *ca = mprague_ca(sk);
+    struct mprague *ca = inet_csk_ca(sk);
     struct tcp_sock *tp = tcp_sk(sk);
-    u64 reduction;
-
     ca->loss_cwnd = tp->snd_cwnd;
-    reduction = ((ca->upscaled_alpha >> mprague_shift_g) * tp->snd_cwnd
-             /* Unbias the rounding by adding 1/2 */
-             + MPRAGUE_MAX_ALPHA) >> (MPRAGUE_ALPHA_BITS  + 1U);
-    return max(tp->snd_cwnd - (u32)reduction, 2U);
+    return max(tp->snd_cwnd - ((tp->snd_cwnd * ca->upscaled_alpha) >> 11U), 2U);
+
+
 }
 
 static void mprague_update_pacing_rate(struct sock *sk)
-{
-    const struct tcp_sock *tp = tcp_sk(sk);
-    u64 max_burst, rate;
+{  
+      
+	const struct tcp_sock *tp = tcp_sk(sk);
+	u64 rate;
 
-    rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3);
-    if (tp->snd_cwnd < tp->snd_ssthresh / 2)
-        rate *= 2 * max(tp->snd_cwnd, tp->packets_out);
-    else
-        /* Spread over the full RTT, with enough room for AI */
-        rate *= max(tp->snd_cwnd, tp->packets_out) + 2;
+	/* set sk_pacing_rate to 200 % of current rate (mss * cwnd / srtt) */
+	rate = (u64)tp->mss_cache * ((USEC_PER_SEC / 100) << 3);
 
-    if (likely(tp->srtt_us))
-        do_div(rate, tp->srtt_us);
+	/* current rate is (cwnd * mss) / srtt
+	 * In Slow Start [1], set sk_pacing_rate to 200 % the current rate.
+	 * In Congestion Avoidance phase, set it to 120 % the current rate.
+	 *
+	 * [1] : Normal Slow Start condition is (tp->snd_cwnd < tp->snd_ssthresh)
+	 *	 If snd_cwnd >= (tp->snd_ssthresh / 2), we are approaching
+	 *	 end of slow start and should slow down.
+	 */
+	if (tp->snd_cwnd < tp->snd_ssthresh / 2)
+		rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ss_ratio;
+	else
+		rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ca_ratio;
+
+	rate *= max(tp->snd_cwnd, tp->packets_out);
+
+	if (likely(tp->srtt_us))
+		do_div(rate, tp->srtt_us);
+
+	/* WRITE_ONCE() is needed because sch_fq fetches sk_pacing_rate
+	 * without any lock. We want to make sure compiler wont store
+	 * intermediate values in this location.
+	 */
+	WRITE_ONCE(sk->sk_pacing_rate, min_t(u64, rate,
+					     sk->sk_max_pacing_rate));
 
 
-    rate = min_t(u64, rate, sk->sk_max_pacing_rate);
-    /* Allow TSO bursts of at most 1ms */
-    max_burst = rate;
-    do_div(max_burst, (tp->mss_cache * MSEC_PER_SEC));
-    mprague_ca(sk)->max_tso_burst = max_t(u32, max_burst, 1);
+      #if 0
+        const struct tcp_sock *tp = tcp_sk(sk);
+	u64 max_burst, rate;
 
-    WRITE_ONCE(sk->sk_pacing_rate, rate);
+	rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3);
+	if (tp->snd_cwnd < tp->snd_ssthresh / 2)
+		rate *= 2 * max(tp->snd_cwnd, tp->packets_out);
+	else
+		/* Spread over the full RTT, with enough room for AI */
+		rate *= max(tp->snd_cwnd, tp->packets_out) + 2;
+
+	if (likely(tp->srtt_us))
+		do_div(rate, tp->srtt_us);
+
+
+	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
+	/* Allow TSO bursts of at most 1ms */
+	max_burst = rate;
+	do_div(max_burst, (tp->mss_cache * MSEC_PER_SEC));
+	mprague_ca(sk)->max_tso_burst = max_t(u32, max_burst, 1);
+
+	WRITE_ONCE(sk->sk_pacing_rate, rate);
+   #endif 
+
+
 }
 
-static void mprague_rtt_expired(struct sock *sk)
+
+static void mprague_rtt_expired(struct sock *sk,u32 flags)
 {
-    struct mprague *ca = mprague_ca(sk);
-    struct tcp_sock *tp = tcp_sk(sk);
-    u64 bytes_ecn, alpha;
+        const struct tcp_sock *tp = tcp_sk(sk);
+        struct mprague *ca = inet_csk_ca(sk);
 
-    bytes_ecn = ca->acked_bytes_ecn;
-    alpha = ca->upscaled_alpha;
-    /* We diverge from the original EWMA, i.e.,
-     * alpha = (1 - g) * alpha + g * F
-     * by working with (and storing)
-     * upscaled_alpha = alpha * (1/g) [recall that 0<g<1]
-     * As a result, the EWMA then becomes
-     * upscaled_alpha = upscaled_alpha * (1/g - 1) + F.
-     *
-     * This enables to carry alpha's residual value to the next EWMA round.
-     *
-     * We first compute F, the fraction of ecn bytes.
-     */
-    if (bytes_ecn) {
-        /* bytes_ecn has to be 64b to avoid overfow as alpha's
-         * resolution increases.
-         */
-        bytes_ecn <<= MPRAGUE_ALPHA_BITS;
-        do_div(bytes_ecn, max(1U, ca->acked_bytes_total));
-    }
-    alpha = alpha - (alpha >> mprague_shift_g) + bytes_ecn;
+        /* Expired RTT */
+        if (!before(tp->snd_una, ca->next_seq)) {
+                u32 delivered_ce = tp->delivered_ce - ca->old_delivered_ce;
+                u32 alpha = ca->upscaled_alpha;
 
-    WRITE_ONCE(ca->upscaled_alpha, alpha);
+                /* alpha = (1 - g) * alpha + g * F */
 
-    mprague_reset(tp, ca);
-    if (bytes_ecn) {
+                alpha -= min_not_zero(alpha, alpha >> mprague_shift_g);
+                if (delivered_ce) {
+                        u32 delivered = tp->delivered - ca->old_delivered;
+
+                        /* If dctcp_shift_g == 1, a 32bit value would overflow
+                         *              * after 8 M packets.
+                         *                           */
+                        delivered_ce <<= (10 - mprague_shift_g);
+                        delivered_ce /= max(1U, delivered);
+
+                        alpha = min(alpha + delivered_ce, MPRAGUE_MAX_ALPHA);
+                }
+                /* dctcp_alpha can be read from dctcp_get_info() without
+                 *          * synchro, so we ask compiler to not use dctcp_alpha
+                 *                   * as a temporary variable in prior operations.
+                 *                            */
+                WRITE_ONCE(ca->upscaled_alpha, alpha);
+                mprague_reset(tp, ca);
+        }
+
+  
+   #if 0 
+   if (bytes_ecn) {
         tp->snd_cwnd = mprague_ssthresh(sk);
         tp->snd_ssthresh = tp->snd_cwnd;
     }
+  #endif
+
+
+
 }
+
+
 
 static void mprague_recalc_beta( const struct sock *sk)
 {
@@ -280,7 +302,7 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
         }
 
         //if (!tcp_is_cwnd_limited(sk)) //correct
-        if (tcp_is_cwnd_limited(sk))
+        if (!tcp_is_cwnd_limited(sk))
            {
              //printk("tcp_is_cwnd_limited\n");
                 return;
@@ -339,6 +361,7 @@ static void mprague_update_window(struct sock *sk,
 
 }
 
+#if 0
 static void mprague_update_ce_stats(struct sock *sk)
 {
     struct tcp_sock *tp = tcp_sk(sk);
@@ -362,12 +385,14 @@ static void mprague_update_ce_stats(struct sock *sk)
     ca->delivered_ce = tp->delivered_ce;
 }
 
+#endif 
+
 static void mprague_cong_control(struct sock *sk, const struct rate_sample *rs)
 {
-    mprague_update_ce_stats(sk);
+    //mprague_update_ce_stats(sk);
     mprague_update_window(sk, rs);
-    if (mprague_rtt_complete(sk))
-        mprague_rtt_expired(sk);
+    //if (mprague_rtt_complete(sk))
+        //mprague_rtt_expired(sk);
 
     mprague_update_pacing_rate(sk);
 }
@@ -384,8 +409,7 @@ static void mprague_react_to_loss(struct sock *sk)
 
 static void mprague_state(struct sock *sk, u8 new_state)
 {
-    if (new_state == TCP_CA_Recovery
-        && new_state != inet_csk(sk)->icsk_ca_state)
+    if (new_state == TCP_CA_Recovery && new_state != inet_csk(sk)->icsk_ca_state)
         /* React to the first fast retransmit of this window */
         mprague_react_to_loss(sk);
     if (mptcp(tcp_sk(sk)))
@@ -394,32 +418,27 @@ static void mprague_state(struct sock *sk, u8 new_state)
 
 
 static void mprague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
-{  
-     struct tcp_sock *tp = tcp_sk(sk);
+{
+        struct mprague *ca = inet_csk_ca(sk);
+        struct tcp_sock *tp = tcp_sk(sk);
 
-    switch(ev) {
-    case CA_EVENT_ECN_IS_CE:
-        mprague_ca(sk)->was_ce = true;
-        break;
-    case CA_EVENT_ECN_NO_CE:
-        if (mprague_ca(sk)->was_ce)
-            /* Immediately ACK a trail of CE packets */
-            inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
-        mprague_ca(sk)->was_ce = false;
-        break;
-    case CA_EVENT_LOSS:
-        /* React to a RTO if no other loss-related events happened
-         * during this window.
-         */
-        mprague_react_to_loss(sk);
-        if(mptcp(tp))
-            mprague_recalc_beta(sk);
-        break;
-    default:
-        /* Ignore everything else */
-        break;
-    }
+        switch (ev) {
+                case CA_EVENT_ECN_IS_CE:
+                case CA_EVENT_ECN_NO_CE:
+                        mprague_ece_ack_update(sk, ev, &ca->prior_rcv_nxt, &ca->ce_state);
+                        break;
+                case CA_EVENT_LOSS:
+                        mprague_react_to_loss(sk);
+                        if(mptcp(tp))
+                                mprague_recalc_beta(sk);
+                        break;
+                default:
+                        /* Don't care for the rest. */
+                        break;
+        }
 }
+
+
 
 static u32 mprague_cwnd_undo(struct sock *sk)
 {
@@ -442,9 +461,7 @@ static void mprague_release(struct sock *sk)
      * the flag (e.g., could have been set by bpf prog)
      */
     tp->ecn_flags &= ~TCP_ECN_ECT_1;
-    LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, "
-        "received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,
-        tp->received_ce_tx);
+
 }
 
 static void mprague_init(struct sock *sk)
@@ -465,10 +482,12 @@ static void mprague_init(struct sock *sk)
         mprague_set_forced(mptcp_meta_sk(sk), 0);
         mprague_set_beta(mptcp_meta_sk(sk), beta_scale);
 
-        ca->prior_snd_una = tp->snd_una;
+        //ca->prior_snd_una = tp->snd_una;
         ca->prior_rcv_nxt = tp->rcv_nxt;
         ca->upscaled_alpha = 0;
         ca->loss_cwnd = 0;
+        ca->ce_state = 0;
+
         /* Conservatively start with a very low TSO limit */
         ca->max_tso_burst = 1;
         printk("Mprague init !\n");
@@ -494,6 +513,7 @@ static void mprague_init(struct sock *sk)
 static struct tcp_congestion_ops mprague __read_mostly = {
     .init       = mprague_init,
     .release    = mprague_release,
+    .in_ack_event   = mprague_rtt_expired,
     .cong_control = mprague_cong_control,
     .cwnd_event = mprague_cwnd_event,
     .ssthresh   = mprague_ssthresh,

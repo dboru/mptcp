@@ -154,11 +154,11 @@ static void mdtcp_recalc_beta( const struct sock *sk)
 	const struct mptcp_tcp_sock *mptcp;
 
 	u64 beta = 1;
-
-	int best_rtt = 1,can_send = 0;
+        u32 best_rtt = 0xffffffff;
+	int can_send = 0;
 
 	if (!mpcb)
-		return;
+	    return;
 
 	mptcp_for_each_sub(mpcb, mptcp) {
 		const struct sock *sub_sk = mptcp_to_sock(mptcp);
@@ -168,7 +168,7 @@ static void mdtcp_recalc_beta( const struct sock *sk)
 			continue;
 		can_send++;
 		/* We need to look for the path, that provides the minimum RTT*/
-		if (best_rtt == 1 || sub_tp->srtt_us < best_rtt)
+		if (sub_tp->srtt_us < best_rtt)
 			best_rtt = sub_tp->srtt_us;
 
 
