@@ -477,11 +477,12 @@ static inline void tcp_dec_quickack_mode(struct sock *sk,
 	}
 }
 
-#define	TCP_ECN_OK		1
-#define	TCP_ECN_QUEUE_CWR	2
-#define	TCP_ECN_DEMAND_CWR	4
-#define	TCP_ECN_SEEN		8
-
+#define	TCP_ECN_OK		0x01
+#define	TCP_ECN_QUEUE_CWR	0x02
+#define	TCP_ECN_DEMAND_CWR	0x04
+#define	TCP_ECN_SEEN		0x08
+#define	TCP_ACCECN_OK		0x10
+#define	TCP_ECN_ECT_1		0x20	/* Use ECT(1) instead of ECT(0) */
 enum tcp_tw_status {
 	TCP_TW_SUCCESS = 0,
 	TCP_TW_RST = 1,
@@ -653,6 +654,8 @@ bool cookie_timestamp_decode(const struct net *net,
 			     struct tcp_options_received *opt);
 bool cookie_ecn_ok(const struct tcp_options_received *opt,
 		   const struct net *net, const struct dst_entry *dst);
+
+bool cookie_accecn_ok(const struct tcphdr *th);
 
 /* From net/ipv6/syncookies.c */
 int __cookie_v6_check(const struct ipv6hdr *iph, const struct tcphdr *th,
@@ -866,7 +869,7 @@ static inline u64 tcp_clock_ns(void)
 
 static inline u64 tcp_clock_us(void)
 {
-	return div_u64(tcp_clock_ns(), NSEC_PER_USEC);
+         return div_u64(tcp_clock_ns(), NSEC_PER_USEC);
 }
 
 /* This should only be used in contexts where tp->tcp_mstamp is up to date */
@@ -903,6 +906,7 @@ static inline u32 tcp_skb_timestamp(const struct sk_buff *skb)
 	return div_u64(skb->skb_mstamp, USEC_PER_SEC / TCP_TS_HZ);
 }
 
+#define tcp_res_flag_byte(th) (((u_int8_t *)th)[12])
 
 #define tcp_flag_byte(th) (((u_int8_t *)th)[13])
 
@@ -914,8 +918,9 @@ static inline u32 tcp_skb_timestamp(const struct sk_buff *skb)
 #define TCPHDR_URG 0x20
 #define TCPHDR_ECE 0x40
 #define TCPHDR_CWR 0x80
-
+#define TCPHDR_AE  0x01
 #define TCPHDR_SYN_ECN	(TCPHDR_SYN | TCPHDR_ECE | TCPHDR_CWR)
+#define TCPHDR_SYNACK_ACCECN (TCPHDR_SYN | TCPHDR_ACK | TCPHDR_CWR)
 
 /* This is what the send packet queuing engine uses to pass
  * TCP per-packet control information to the transmission code.
@@ -946,7 +951,7 @@ struct tcp_skb_cb {
 					 * seq-number */
 #endif
 	__u8		tcp_flags;	/* TCP header flags. (tcp[13])	*/
-
+        __u8		tcp_res_flags;	/* TCP reserved flags. (tcp[12]) */
 	__u8		sacked;		/* State flags for SACK.	*/
 #define TCPCB_SACKED_ACKED	0x01	/* SKB ACK'd by a SACK block	*/
 #define TCPCB_SACKED_RETRANS	0x02	/* SKB retransmitted		*/
@@ -999,6 +1004,26 @@ struct tcp_skb_cb {
 };
 
 #define TCP_SKB_CB(__skb)	((struct tcp_skb_cb *)&((__skb)->cb[0]))
+
+static inline u8 tcp_accecn_skb_cb_ace(const struct sk_buff *skb)
+ {
+ 	return (TCP_SKB_CB(skb)->tcp_res_flags & TCPHDR_AE) << 2
+ 		| ((TCP_SKB_CB(skb)->tcp_flags
+ 		    & (TCPHDR_ECE | TCPHDR_CWR)) >> 6);
+ }
+
+static inline void tcp_accecn_copy_skb_cb_ace(const struct sk_buff *from,
+ 					    struct sk_buff *to)
+ {
+ 	const u8 res_flags = TCP_SKB_CB(to)->tcp_res_flags & ~TCPHDR_AE;
+ 	const u8 flags = TCP_SKB_CB(to)->tcp_flags & ~(TCPHDR_ECE | TCPHDR_CWR);
+
+  	TCP_SKB_CB(to)->tcp_res_flags = res_flags |
+ 		(TCP_SKB_CB(from)->tcp_res_flags & TCPHDR_AE);
+ 	TCP_SKB_CB(to)->tcp_flags = flags |
+ 		(TCP_SKB_CB(from)->tcp_flags & (TCPHDR_ECE | TCPHDR_CWR));
+ }
+
 
 static inline void bpf_compute_data_end_sk_skb(struct sk_buff *skb)
 {
@@ -1111,6 +1136,8 @@ enum tcp_ca_ack_event_flags {
 #define TCP_CONG_NON_RESTRICTED 0x1
 /* Requires ECN/ECT set on all packets */
 #define TCP_CONG_NEEDS_ECN	0x2
+/* Requires ECT(1) set on all packets */
+#define TCP_CONG_WANTS_ECT_1	0x4
 
 union tcp_cc_info;
 
@@ -1142,6 +1169,7 @@ struct rate_sample {
 	bool is_app_limited;	/* is sample from packet with bubble in pipe? */
 	bool is_retrans;	/* is sample from retransmission? */
 	bool is_ack_delayed;	/* is this (likely) a delayed ACK? */
+        bool is_ece;		/* is this ACK echoing a received CE? */
 };
 
 struct tcp_congestion_ops {
@@ -1170,6 +1198,9 @@ struct tcp_congestion_ops {
 	void (*pkts_acked)(struct sock *sk, const struct ack_sample *sample);
 	/* override sysctl_tcp_min_tso_segs */
 	u32 (*min_tso_segs)(struct sock *sk);
+         /* maximal TSO burst allowed by the CC */
+ 	u32 (*max_tso_segs)(struct sock *sk);
+
 	/* returns the multiplier used in tcp_sndbuf_expand (optional) */
 	u32 (*sndbuf_expand)(struct sock *sk);
 	/* call when packets are delivered to update cwnd and pacing rate,
@@ -1195,7 +1226,9 @@ void tcp_get_default_congestion_control(struct net *net, char *name);
 void tcp_get_available_congestion_control(char *buf, size_t len);
 void tcp_get_allowed_congestion_control(char *buf, size_t len);
 int tcp_set_allowed_congestion_control(char *allowed);
-int tcp_set_congestion_control(struct sock *sk, const char *name, bool load, bool reinit);
+//int tcp_set_congestion_control(struct sock *sk, const char *name, bool load, bool reinit);
+int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
+ 			       bool reinit, bool cap_net_admin);
 u32 tcp_slow_start(struct tcp_sock *tp, u32 acked);
 void tcp_cong_avoid_ai(struct tcp_sock *tp, u32 w, u32 acked);
 
@@ -1221,6 +1254,13 @@ static inline bool tcp_ca_needs_ecn(const struct sock *sk)
 
 	return icsk->icsk_ca_ops->flags & TCP_CONG_NEEDS_ECN;
 }
+
+static inline bool tcp_ca_wants_ect_1(const struct sock *sk)
+ {
+ 	const struct inet_connection_sock *icsk = inet_csk(sk);
+
+  	return icsk->icsk_ca_ops->flags & TCP_CONG_WANTS_ECT_1;
+ }
 
 static inline void tcp_set_ca_state(struct sock *sk, const u8 ca_state)
 {
@@ -2353,5 +2393,17 @@ void clean_acked_data_enable(struct inet_connection_sock *icsk,
 void clean_acked_data_disable(struct inet_connection_sock *icsk);
 
 #endif
+
+/* See draft-ietf-tcpm-accurate-ecn for the latest values */
+ #define TCP_ACCECN_CEP_INIT 5
+ #define TCP_ACCECN_CEP_MAX_DELTA 6
+
+  /* To avoid/detect middlebox interference, not all counters start at 0 */
+ static inline void tcp_accecn_init_counters(struct tcp_sock *tp)
+ {
+ 	tp->delivered_ce = TCP_ACCECN_CEP_INIT;
+ 	tp->received_ce = TCP_ACCECN_CEP_INIT;
+ 	tp->received_ce_tx = TCP_ACCECN_CEP_INIT;
+ }
 
 #endif	/* _TCP_H */

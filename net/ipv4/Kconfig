@@ -649,6 +649,27 @@ config TCP_CONG_DCTCP
 	For further details see:
 	  http://simula.stanford.edu/~alizade/Site/DCTCP_files/dctcp-final.pdf
 
+config TCP_CONG_PRAGUE
+ 	tristate "TCP Prague"
+ 	default n
+ 	---help---
+ 	DCTCP leverages Explicit Congestion Notification (ECN) in the network to
+ 	provide multi-bit feedback to the end hosts. It is designed to provide:
+
+  	- High burst tolerance (incast due to partition/aggregate),
+ 	- Low latency (short flows, queries),
+ 	- High throughput (continuous data updates, large file transfers) with
+ 	  commodity, shallow-buffered switches.
+
+
+config TCP_CONG_MPRAGUE
+        tristate "MPRAGUE CONGESTION CONTROL"
+        depends on MPTCP
+        default n
+        ---help---
+        Multipath TCP Prague  Congestion Control
+        To enable it, just put 'mprague' in tcp_congestion_control
+
 config TCP_CONG_CDG
 	tristate "CAIA Delay-Gradient (CDG)"
 	default n
@@ -755,6 +776,10 @@ choice
 
 	config DEFAULT_DCTCP
 		bool "DCTCP" if TCP_CONG_DCTCP=y
+        config DEFAULT_PRAGUE
+ 		bool "Prague" if TCP_CONG_PRAGUE=y
+        config DEFAULT_MPRAGUE
+                 bool "Mprague" if TCP_CONG_MPRAGUE=y
 
 	config DEFAULT_CDG
 		bool "CDG" if TCP_CONG_CDG=y
@@ -803,7 +828,9 @@ config DEFAULT_TCP_CONG
 	default "balia" if DEFAULT_BALIA
 	default "reno" if DEFAULT_RENO
 	default "dctcp" if DEFAULT_DCTCP
-	default "cdg" if DEFAULT_CDG
+	default "prague" if DEFAULT_PRAGUE
+        default "mprague" if DEFAULT_MPRAGUE
+        default "cdg" if DEFAULT_CDG
 	default "bbr" if DEFAULT_BBR
 	default "cubic"
 
