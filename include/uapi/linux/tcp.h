@@ -46,7 +46,8 @@ struct tcphdr {
 		ece:1,
 		cwr:1;
 #elif defined(__BIG_ENDIAN_BITFIELD)
-	__u16	res1:3,
+	__u16	doff:4,
+                res1:3,
 		ae:1,
 		cwr:1,
 		ece:1,
