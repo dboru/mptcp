@@ -89,7 +89,6 @@ struct inet_request_sock {
 				sack_ok	   : 1,
 				wscale_ok  : 1,
 				ecn_ok	   : 1,
-                                accecn_ok  : 1,
 				acked	   : 1,
 				no_srccheck: 1,
 				mptcp_rqsk : 1,

@@ -3404,8 +3404,7 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info, bool no_lock)
 		info->tcpi_snd_wscale = tp->rx_opt.snd_wscale;
 		info->tcpi_rcv_wscale = tp->rx_opt.rcv_wscale;
 	}
-
-	if (tp->ecn_flags & TCP_ECN_OK)
+        if (tcp_ecn_ok(tp))
 		info->tcpi_options |= TCPI_OPT_ECN;
 	if (tp->ecn_flags & TCP_ECN_SEEN)
 		info->tcpi_options |= TCPI_OPT_ECN_SEEN;

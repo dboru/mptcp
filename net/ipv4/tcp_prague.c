@@ -57,9 +57,12 @@ struct prague {
 static unsigned int prague_shift_g __read_mostly = 4; /* g = 1/2^4 */
 static int prague_ect __read_mostly = 1;
 static int prague_ecn_plus_plus __read_mostly = 1;
-
+static int prague_burst_usec __read_mostly = 500; /* .5ms */
 MODULE_PARM_DESC(prague_shift_g, "gain parameter for alpha EWMA");
 module_param(prague_shift_g, uint, 0644);
+
+MODULE_PARM_DESC(prague_burst_usec, "maximal TSO burst duration");
+module_param(prague_burst_usec, uint, 0644);
 
 MODULE_PARM_DESC(prague_ect, "send packet with ECT(prague_ect)");
 /* We currently do not allow this to change through sysfs */
@@ -129,25 +132,30 @@ static void prague_update_pacing_rate(struct sock *sk)
 {
     const struct tcp_sock *tp = tcp_sk(sk);
     u64 max_burst, rate;
-
-    rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3);
-    if (tp->snd_cwnd < tp->snd_ssthresh / 2)
-        rate *= 2 * max(tp->snd_cwnd, tp->packets_out);
-    else
-        /* Spread over the full RTT, with enough room for AI */
-        rate *= max(tp->snd_cwnd, tp->packets_out) + 2;
-
+    u32 max_inflight;
+    max_inflight = max(tp->snd_cwnd, tp->packets_out);
+    rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3) * max_inflight;
     if (likely(tp->srtt_us))
-        do_div(rate, tp->srtt_us);
+		do_div(rate, tp->srtt_us);
+    max_burst = div_u64(rate * prague_burst_usec,
+			    tp->mss_cache * USEC_PER_SEC);
+    max_burst = max_t(u32, 1, max_burst);
+    WRITE_ONCE(prague_ca(sk)->max_tso_burst, max_burst);
+   if (tp->snd_cwnd < tp->snd_ssthresh / 2)
+		/* 200% for slowstart */
+		rate *= 2 ;
+   else if (tp->packets_out < tp->snd_cwnd)
+		/* Scale pacing rate based on the number of consecutive segments
+		 * that can be sent, i.e., rate is 200% for high BDPs
+		 * that are perfectly ACK-paced (i.e., where packets_out is
+		 * almost max_inflight), but decrease to 100% if a full
+		 * RTT is aggregated into a single ACK or if we have more in
+		 * flight data than our cwnd allows.
+		 */
+		rate += rate * (1 + tp->packets_out) / max_inflight;
+	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
+	WRITE_ONCE(sk->sk_pacing_rate, rate);
 
-
-    rate = min_t(u64, rate, sk->sk_max_pacing_rate);
-    /* Allow TSO bursts of at most 1ms */
-    max_burst = rate;
-    do_div(max_burst, (tp->mss_cache * MSEC_PER_SEC));
-    prague_ca(sk)->max_tso_burst = max_t(u32, max_burst, 1);
-
-    WRITE_ONCE(sk->sk_pacing_rate, rate);
 }
 
 static void prague_rtt_expired(struct sock *sk)
@@ -181,10 +189,7 @@ static void prague_rtt_expired(struct sock *sk)
     WRITE_ONCE(ca->upscaled_alpha, alpha);
 
     prague_reset(tp, ca);
-    if (bytes_ecn) {
-        tp->snd_cwnd = prague_ssthresh(sk);
-        tp->snd_ssthresh = tp->snd_cwnd;
-    }
+    
 }
 
 static void prague_update_window(struct sock *sk,
@@ -241,34 +246,47 @@ static void prague_react_to_loss(struct sock *sk)
 
 static void prague_state(struct sock *sk, u8 new_state)
 {
-    if (new_state == TCP_CA_Recovery
-        && new_state != inet_csk(sk)->icsk_ca_state)
-        /* React to the first fast retransmit of this window */
-        prague_react_to_loss(sk);
+   struct tcp_sock *tp = tcp_sk(sk);
+
+	if (new_state == inet_csk(sk)->icsk_ca_state)
+		return;
+
+	switch (new_state) {
+		case TCP_CA_Recovery:
+			prague_react_to_loss(sk);
+			break;
+		case TCP_CA_CWR:
+			tp->snd_cwnd = prague_ssthresh(sk);
+			tp->snd_ssthresh = tp->snd_cwnd;
+			break;
+		default:
+			break;
+	}
 }
 
 static void prague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 {
-    switch(ev) {
-    case CA_EVENT_ECN_IS_CE:
-        prague_ca(sk)->was_ce = true;
-        break;
-    case CA_EVENT_ECN_NO_CE:
-        if (prague_ca(sk)->was_ce)
-            /* Immediately ACK a trail of CE packets */
-            inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
-        prague_ca(sk)->was_ce = false;
-        break;
-    case CA_EVENT_LOSS:
-        /* React to a RTO if no other loss-related events happened
-         * during this window.
-         */
-        prague_react_to_loss(sk);
-        break;
-    default:
-        /* Ignore everything else */
-        break;
-    }
+  switch(ev) {
+	case CA_EVENT_ECN_IS_CE:
+		prague_ca(sk)->was_ce = true;
+		break;
+	case CA_EVENT_ECN_NO_CE:
+		if (prague_ca(sk)->was_ce)
+			/* Immediately ACK a trail of CE packets */
+			inet_csk(sk)->icsk_ack.pending |= ICSK_ACK_NOW;
+		prague_ca(sk)->was_ce = false;
+		break;
+	case CA_EVENT_LOSS:
+		/* React to a RTO if no other loss-related events happened
+		 * during this window.
+		 */
+		prague_react_to_loss(sk);
+		break;
+	default:
+		/* Ignore everything else */
+		break;
+	}
+
 }
 
 static u32 prague_cwnd_undo(struct sock *sk)
@@ -278,55 +296,55 @@ static u32 prague_cwnd_undo(struct sock *sk)
     return max(tcp_sk(sk)->snd_cwnd, ca->loss_cwnd);
 }
 
-
 static void prague_release(struct sock *sk)
 {
-    struct tcp_sock *tp = tcp_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 
-    /* We forced the use of ECT(x), disable this before switching CC */
-    INET_ECN_dontxmit(sk);
-    /* TODO(otilmans) if we allow that param to be 0644 then we'll
-     * need to deal with that here and not unconditionally reset
-     * the flag (e.g., could have been set by bpf prog)
-     */
-    tp->ecn_flags &= ~TCP_ECN_ECT_1;
-    LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, "
-        "received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,
-        tp->received_ce_tx);
+	/* We forced the use of ECT(x), disable this before switching CC */
+	INET_ECN_dontxmit(sk);
+	/* TODO(otilmans) if we allow that param to be 0644 then we'll
+	 * need to deal with that here and not unconditionally reset
+	 * the flag (e.g., could have been set by bpf prog)
+	 */
+	tp->ecn_flags &= ~TCP_ECN_ECT_1;
+	LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, "
+	    "received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,
+	    tp->received_ce_tx);
 }
 
 static void prague_init(struct sock *sk)
 {
-    struct tcp_sock *tp = tcp_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
 
-    if ((tp->ecn_flags & TCP_ACCECN_OK) ||
-        (sk->sk_state == TCP_LISTEN ||
-         sk->sk_state == TCP_CLOSE)) {
-        struct prague *ca = prague_ca(sk);
+	/* We're stuck in TCP_ACCECN_PENDING before the 3rd ACK */
+	if (tcp_ecn_ok(tp) ||
+	    (sk->sk_state == TCP_LISTEN || sk->sk_state == TCP_CLOSE)) {
+		struct prague *ca = prague_ca(sk);
 
-        ca->prior_snd_una = tp->snd_una;
-        ca->prior_rcv_nxt = tp->rcv_nxt;
-        ca->upscaled_alpha = 0;
-        ca->loss_cwnd = 0;
-        /* Conservatively start with a very low TSO limit */
-        ca->max_tso_burst = 1;
+		ca->prior_snd_una = tp->snd_una;
+		ca->prior_rcv_nxt = tp->rcv_nxt;
+		ca->upscaled_alpha = 0;
+		ca->loss_cwnd = 0;
+		/* Conservatively start with a very low TSO limit */
+		ca->max_tso_burst = 1;
 
-        if (prague_ect)
-            tp->ecn_flags |= TCP_ECN_ECT_1;
+		if (prague_ect)
+			tp->ecn_flags |= TCP_ECN_ECT_1;
 
-        cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,
-            SK_PACING_NEEDED);
+		cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,
+			SK_PACING_NEEDED);
 
-        prague_reset(tp, ca);
-        return;
-    }
-    /* Cannot use Prague without AccECN
-     * TODO(otilmans) If TCP_ECN_OK, we can trick the receiver to echo few
-     * ECEs per CE received by setting CWR at most once every two segments.
-     * This is however quite sensitive to ACK thinning...
-     */
-    prague_release(sk);
-    inet_csk(sk)->icsk_ca_ops = &prague_reno;
+		prague_reset(tp, ca);
+		return;
+	}
+	/* Cannot use Prague without AccECN
+	 * TODO(otilmans) If TCP_ECN_OK, we can trick the receiver to echo few
+	 * ECEs per CE received by setting CWR at most once every two segments.
+	 * This is however quite sensitive to ACK thinning...
+	 */
+	prague_release(sk);
+	LOG(sk, "Switching back to reno fallback\n");
+	inet_csk(sk)->icsk_ca_ops = &prague_reno;
 }
 
 static struct tcp_congestion_ops prague __read_mostly = {
@@ -338,7 +356,8 @@ static struct tcp_congestion_ops prague __read_mostly = {
     .undo_cwnd    = prague_cwnd_undo,
     .set_state    = prague_state,
     .max_tso_segs    = prague_max_tso_seg,
-    .flags        = TCP_CONG_NEEDS_ECN | TCP_CONG_NON_RESTRICTED,
+    .flags        = TCP_CONG_NEEDS_ECN | TCP_CONG_NEEDS_ACCECN |
+		TCP_CONG_NON_RESTRICTED,
     .owner        = THIS_MODULE,
     .name        = "prague",
 };

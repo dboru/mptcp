@@ -119,8 +119,9 @@ static void mdtcp_update_alpha(struct sock *sk, u32 flags)
 
 		/* alpha = (1 - g) * alpha + g * F */
 
-		alpha -= min_not_zero(alpha, alpha >> mdtcp_shift_g);
-		if (delivered_ce) {
+		//alpha -= min_not_zero(alpha, alpha >> mdtcp_shift_g);
+		alpha -= alpha >> mdtcp_shift_g;
+                if (delivered_ce) {
 			u32 delivered = tp->delivered - ca->old_delivered;
 
 			/* If dctcp_shift_g == 1, a 32bit value would overflow
@@ -201,7 +202,7 @@ static void mdtcp_init(struct sock *sk)
 
 	const struct tcp_sock *tp = tcp_sk(sk);
 	struct mdtcp *ca = inet_csk_ca(sk);
-	if (mptcp(tcp_sk(sk)) && ((tp->ecn_flags & TCP_ECN_OK) ||
+	if (mptcp(tcp_sk(sk)) && (tcp_ecn_ok(tp) ||
 				(sk->sk_state == TCP_LISTEN ||
 				 sk->sk_state == TCP_CLOSE))) {
 
@@ -217,7 +218,7 @@ static void mdtcp_init(struct sock *sk)
 		mdtcp_reset(tp, ca);
 		return;
 
-	} else if (!mptcp(tcp_sk(sk)) && ((tp->ecn_flags & TCP_ECN_OK) ||
+	} else if (!mptcp(tcp_sk(sk)) && (tcp_ecn_ok(tp) ||
 				(sk->sk_state == TCP_LISTEN ||
 				 sk->sk_state == TCP_CLOSE))) {
 
