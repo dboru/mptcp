@@ -21,7 +21,7 @@
  *   as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
  */
 
-#define pr_fmt(fmt) "TCP-MPrague: " fmt
+#define pr_fmt(fmt) "MPTCP-MPrague: " fmt
 
 #include <linux/module.h>
 #include <linux/mm.h>
@@ -55,13 +55,17 @@ struct mprague {
 static unsigned int mprague_shift_g __read_mostly = 4; /* g = 1/2^4 */
 static int mprague_ect __read_mostly = 1;
 static int mprague_ecn_plus_plus __read_mostly = 1;
-static int prague_burst_usec __read_mostly = 500; /* .5ms */	
+static int mprague_burst_usec __read_mostly = 250; /* .25ms */	
+static int mprague_init_alpha __read_mostly = MPRAGUE_MAX_ALPHA;
 
 MODULE_PARM_DESC(mprague_shift_g, "gain parameter for alpha EWMA");
 module_param(mprague_shift_g, uint, 0644);
 
-MODULE_PARM_DESC(prague_burst_usec, "maximal TSO burst duration");
-module_param(prague_burst_usec, uint, 0644);
+MODULE_PARM_DESC(mprague_init_alpha, "initial alpha value");
+module_param(mprague_init_alpha, uint, 0644);
+
+MODULE_PARM_DESC(mprague_burst_usec, "maximal TSO burst duration");
+module_param(mprague_burst_usec, uint, 0644);
 
 MODULE_PARM_DESC(mprague_ect, "send packet with ECT(mprague_ect)");
 /* We currently do not allow this to change through sysfs */
@@ -177,7 +181,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
 	if (likely(tp->srtt_us))
 		do_div(rate, tp->srtt_us);
 
-	max_burst = div_u64(rate * prague_burst_usec,
+	max_burst = div_u64(rate * mprague_burst_usec,
 			tp->mss_cache * USEC_PER_SEC);
 	max_burst = max_t(u32, 1, max_burst);
 	WRITE_ONCE(mprague_ca(sk)->max_tso_burst, max_burst);
@@ -195,7 +199,8 @@ static void mprague_update_pacing_rate(struct sock *sk)
 		 */
 		rate += rate * (1 + tp->packets_out) / max_inflight;
 	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
-	WRITE_ONCE(sk->sk_pacing_rate, rate);
+	//printk("rate %llu \n", rate); 
+        WRITE_ONCE(sk->sk_pacing_rate, rate);
 
 
 }
@@ -254,7 +259,7 @@ static void mprague_recalc_beta( const struct sock *sk)
 		if (!mprague_sk_can_send(sub_sk))
 			continue;
 		can_send++;
-		/* We need to look for the path, that provides the minimum RTT*/
+		/* We need to look for the path that provides the minimum RTT*/
 		if (sub_tp->srtt_us < best_rtt)
 			best_rtt = sub_tp->srtt_us;
 
@@ -304,7 +309,6 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		/* In "safe" area, increase. */
 		tcp_slow_start(tp, acked);
 		mprague_recalc_beta(sk);
-		//printk("In slow start %u\n",tp->snd_cwnd);
 		return;
 	}
 
@@ -330,7 +334,6 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (tp->snd_cwnd_cnt >= snd_cwnd) {
 		if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
 			tp->snd_cwnd++;
-			//printk("cong avoid cwnd %u beta %llu\n",tp->snd_cwnd,beta);
 			mprague_recalc_beta(sk);
 		}
 
@@ -409,21 +412,17 @@ static void mprague_state(struct sock *sk, u8 new_state)
 	switch (new_state) {
 		case TCP_CA_Recovery:
 			mprague_react_to_loss(sk);
-			if (mptcp(tcp_sk(sk)))
-				mprague_set_forced(mptcp_meta_sk(sk), 1);
-
-
 			break;
 		case TCP_CA_CWR:
 			tp->snd_cwnd = mprague_ssthresh(sk);
 			tp->snd_ssthresh = tp->snd_cwnd;
-			if (mptcp(tcp_sk(sk)))
-				mprague_set_forced(mptcp_meta_sk(sk), 1);
-
 			break;
 		default:
 			break;
 	}
+
+	if (mptcp(tcp_sk(sk)))
+		mprague_set_forced(mptcp_meta_sk(sk), 1);
 
 }
 
@@ -477,9 +476,7 @@ static void mprague_release(struct sock *sk)
 	 * the flag (e.g., could have been set by bpf prog)
 	 */
 	tp->ecn_flags &= ~TCP_ECN_ECT_1;
-	LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, "
-			"received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,
-			tp->received_ce_tx);
+	//LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, " "received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,tp->received_ce_tx);
 }
 
 static void mprague_init(struct sock *sk)
@@ -498,11 +495,12 @@ static void mprague_init(struct sock *sk)
 
 			ca->prior_snd_una = tp->snd_una;
 			ca->prior_rcv_nxt = tp->rcv_nxt;
-			ca->upscaled_alpha = 0;
+			
+                        ca->upscaled_alpha = mprague_init_alpha << mprague_shift_g;
 			ca->loss_cwnd = 0;
 			/* Conservatively start with a very low TSO limit */
 			ca->max_tso_burst = 1;
-			printk("Mprague init !\n");
+			//printk("Mprague init !\n");
 			if (mprague_ect)
 				tp->ecn_flags |= TCP_ECN_ECT_1;
 

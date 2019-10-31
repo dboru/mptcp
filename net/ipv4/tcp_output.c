@@ -1093,6 +1093,7 @@ void tcp_update_skb_after_send(struct sock *sk, struct sk_buff *skb,
 			/* take into account OS jitter */
 			len_ns -= min_t(u64, len_ns / 2, credit);
 			tp->tcp_wstamp_ns += len_ns;
+                        //printk("wstamp_ns %llu pacing rate %lu ",tp->tcp_wstamp_ns,rate);
 		}
 	}
 	list_move_tail(&skb->tcp_tsorted_anchor, &tp->tsorted_sent_queue);
@@ -2350,6 +2351,9 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 				  unsigned int factor)
 {
 	unsigned long limit;
+        //struct tcp_sock *tp = tcp_sk(sk);
+        //if (mptcp(tp))
+           //sk_pacing_shift_update(skb->sk, 2);
 
 	limit = max_t(unsigned long,
 		      2 * skb->truesize,
