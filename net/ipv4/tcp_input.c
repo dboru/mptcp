@@ -325,7 +325,7 @@ static void tcp_ecn_check_ce(struct sock *sk, const struct sk_buff *skb)
  {
  	int ect = INET_ECN_NOT_ECT;
  	if (tcp_ecn_status(tp) != TCP_ACCECN_PENDING) {
- 		pr_warn("bad status %d\n", tcp_ecn_status(tp));
+ 		//pr_warn("bad status %d\n", tcp_ecn_status(tp));
  		goto reject;
  	}
 
@@ -336,7 +336,7 @@ static void tcp_ecn_check_ce(struct sock *sk, const struct sk_buff *skb)
  		goto accept;
  	ect = tcp_accecn_echoed_ect(ace);
  	if (ect != sent_ect && ect != INET_ECN_CE) {
- 		pr_warn("got=%d expected=%\n", ect, sent_ect);
+ 		//pr_warn("got=%d expected=%\n", ect, sent_ect);
  		goto reject;
  	}
 
@@ -348,7 +348,7 @@ static void tcp_ecn_check_ce(struct sock *sk, const struct sk_buff *skb)
  	return true;
 
   reject:
- 	pr_warn("Rejected SYN feedback\n");
+ 	//pr_warn("Rejected SYN feedback\n");
  	tcp_set_ecn_status(tp, TCP_ECN_DISABLED);
  	return false;
  }
@@ -402,9 +402,14 @@ static int tcp_ecn_rcv_ecn_echo(struct sock *sk, const struct tcphdr *th)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	WARN_ONCE(tcp_ecn_status(tp) == TCP_ACCECN_PENDING, "Received an ACK "
-		  "while ECN status is still in TCP_ACCECN_PENDING\n");
-	switch (tcp_ecn_status(tp)) {
+       WARN(tcp_ecn_status(tp) == TCP_ACCECN_PENDING &&
+	/* In TCP_SYN_SENT, we will parse the SYN+ACK through tcp_ack()
+ 	      * before sending the final ACK of the 3WHS--which will move us
+ 	      * to TCP_ACCECN_OK after echoing the SYN+ACK ECT codepoint.
+ 	      */
+ 	     sk->sk_state == TCP_ESTABLISHED, "Incomplete AccECN negociation in an ESTABLISHED connection!\n");
+
+        switch (tcp_ecn_status(tp)) {
 	case TCP_ACCECN_OK:
 		return (tcp_accecn_ace(th) + 8 - (tp->delivered_ce & 7)) & 7;
 	case TCP_ECN_OK:
@@ -5888,6 +5893,33 @@ discard:
 }
 EXPORT_SYMBOL(tcp_rcv_established);
 
+/*
+void tcp_init_transfer(struct sock *sk, int bpf_op)
+{
+	struct inet_connection_sock *icsk = inet_csk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	tcp_mtup_init(sk);
+	icsk->icsk_af_ops->rebuild_header(sk);
+	tcp_init_metrics(sk);
+
+	///* Initialize the congestion window to start the transfer.
+	 * Cut cwnd down to 1 per RFC5681 if SYN or SYN-ACK has been
+	 * retransmitted. In light of RFC6298 more aggressive 1sec
+	 * initRTO, we only reset cwnd when more than 1 SYN/SYN-ACK
+	 * retransmission has occurred.
+	 */
+/*	if (tp->total_retrans > 1 && tp->undo_marker)
+		tp->snd_cwnd = 1;
+	else
+		tp->snd_cwnd = tcp_init_cwnd(tp, __sk_dst_get(sk));
+	tp->snd_cwnd_stamp = tcp_jiffies32;
+
+	tcp_call_bpf(sk, bpf_op, 0, NULL);
+	tcp_init_congestion_control(sk);
+	tcp_init_buffer_space(sk);
+}
+*/
 void tcp_finish_connect(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -6617,8 +6649,9 @@ static void tcp_ecn_create_request(struct request_sock *req,
 	bool th_ecn = th->ece && th->cwr;
 	bool ect, ecn_ok;
 	u32 ecn_ok_dst;
-
-	if (tcp_accecn_syn_requested(th) && net->ipv4.sysctl_tcp_ecn) {
+       
+      if (tcp_accecn_syn_requested(th) &&
+ 	    (net->ipv4.sysctl_tcp_ecn || tcp_ca_needs_accecn(listen_sk))) {
 		inet_rsk(req)->ecn_ok = 1;
 		tcp_rsk(req)->accecn_ok = 1;
 		tcp_rsk(req)->ect_rcv =TCP_SKB_CB(skb)->ip_dsfield & INET_ECN_MASK;

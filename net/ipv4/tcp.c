@@ -483,6 +483,7 @@ void tcp_init_sock(struct sock *sk)
 }
 EXPORT_SYMBOL(tcp_init_sock);
 
+
 void tcp_init_transfer(struct sock *sk, int bpf_op)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
@@ -2867,6 +2868,24 @@ static int tcp_repair_options_est(struct sock *sk,
 }
 
 /*
+DEFINE_STATIC_KEY_FALSE(tcp_tx_delay_enabled);
+EXPORT_SYMBOL(tcp_tx_delay_enabled);
+
+static void tcp_enable_tx_delay(void)
+{
+	if (!static_branch_unlikely(&tcp_tx_delay_enabled)) {
+		static int __tcp_tx_delay_enabled = 0;
+
+		if (cmpxchg(&__tcp_tx_delay_enabled, 0, 1) == 0) {
+			static_branch_enable(&tcp_tx_delay_enabled);
+			pr_info("TCP_TX_DELAY enabled\n");
+		}
+	}
+}
+
+*/
+
+/*
  *	Socket option code for TCP.
  */
 static int do_tcp_setsockopt(struct sock *sk, int level,
@@ -3252,7 +3271,7 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		else
 			tp->fastopen_no_cookie = val;
 		break;
-	case TCP_TIMESTAMP:
+       	case TCP_TIMESTAMP:
 		if (!tp->repair)
 			err = -EPERM;
 		else
@@ -3297,6 +3316,13 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		else
 			tp->recvmsg_inq = val;
 		break;
+        /*case TCP_TX_DELAY:
+		if (val)
+			tcp_enable_tx_delay();
+		tp->tcp_tx_delay = val;
+		break;
+         */
+
 	default:
 		err = -ENOPROTOOPT;
 		break;
@@ -3755,6 +3781,10 @@ static int do_tcp_getsockopt(struct sock *sk, int level,
 	case TCP_FASTOPEN_NO_COOKIE:
 		val = tp->fastopen_no_cookie;
 		break;
+        /*case TCP_TX_DELAY:
+		val = tp->tcp_tx_delay;
+		break;
+         */
 
 	case TCP_TIMESTAMP:
 		val = tcp_time_stamp_raw() + tp->tsoffset;

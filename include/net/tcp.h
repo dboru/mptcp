@@ -1946,6 +1946,11 @@ static inline struct sk_buff *tcp_rtx_queue_head(const struct sock *sk)
 	return skb_rb_first(&sk->tcp_rtx_queue);
 }
 
+static inline struct sk_buff *tcp_rtx_queue_tail(const struct sock *sk)
+{
+	return skb_rb_last(&sk->tcp_rtx_queue);
+}
+
 static inline struct sk_buff *tcp_write_queue_head(const struct sock *sk)
 {
 	return skb_peek(&sk->sk_write_queue);
@@ -2496,6 +2501,32 @@ void clean_acked_data_enable(struct inet_connection_sock *icsk,
 void clean_acked_data_disable(struct inet_connection_sock *icsk);
 
 #endif
+/*
+DECLARE_STATIC_KEY_FALSE(tcp_tx_delay_enabled);
+static inline void tcp_add_tx_delay(struct sk_buff *skb,
+				    const struct tcp_sock *tp)
+{
+	if (static_branch_unlikely(&tcp_tx_delay_enabled))
+		skb->skb_mstamp_ns += (u64)tp->tcp_tx_delay * NSEC_PER_USEC;
+}
+*/
+
+/* Compute Earliest Departure Time for some control packets
+ * like ACK or RST for TIME_WAIT or non ESTABLISHED sockets.
+ */
+/*
+static inline u64 tcp_transmit_time(const struct sock *sk)
+{
+	if (static_branch_unlikely(&tcp_tx_delay_enabled)) {
+		u32 delay = (sk->sk_state == TCP_TIME_WAIT) ?
+			tcp_twsk(sk)->tw_tx_delay : tcp_sk(sk)->tcp_tx_delay;
+
+		return tcp_clock_ns() + (u64)delay * NSEC_PER_USEC;
+	}
+	return 0;
+}
+
+*/
 
 /* See draft-ietf-tcpm-accurate-ecn for the latest values */
 #define TCP_ACCECN_CEP_INIT 5

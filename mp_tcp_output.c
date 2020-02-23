@@ -56,10 +56,14 @@
  */
 void tcp_mstamp_refresh(struct tcp_sock *tp)
 {
-       u64 val = tcp_clock_ns();
+	u64 val = tcp_clock_ns();
 
-	tp->tcp_clock_cache = val;
-	tp->tcp_mstamp = div_u64(val, NSEC_PER_USEC);
+	if (val > tp->tcp_clock_cache)
+		tp->tcp_clock_cache = val;
+
+	val = div_u64(val, NSEC_PER_USEC);
+	if (val > tp->tcp_mstamp)
+		tp->tcp_mstamp = val;
 }
 
 /* Account for new data that has been sent to the network. */
@@ -1148,22 +1152,9 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	if (unlikely(tcb->tcp_flags & TCPHDR_SYN))
 		tcp_options_size = tcp_syn_options(sk, skb, &opts, &md5);
-	else {
+	else
 		tcp_options_size = tcp_established_options(sk, skb, &opts,
-            							   &md5);
-             // Dejene-191112-MPrague
-               /* Force a PSH flag on all (GSO) packets to expedite GRO flush
-		 * at receiver : This slightly improve GRO performance.
-		 * Note that we do not force the PSH flag for non GSO packets,
-		 * because they might be sent under high congestion events,
-		 * and in this case it is better to delay the delivery of 1-MSS
-		 * packets and thus the corresponding ACK packet that would
-		 * release the following packet.
-		 */
-		if (tcp_skb_pcount(skb) > 1)
-			tcb->tcp_flags |= TCPHDR_PSH;
-
-            }
+							   &md5);
 	tcp_header_size = tcp_options_size + sizeof(struct tcphdr);
 
 	/* if no packet is in qdisc/device queue, then allow XPS to select
@@ -1265,8 +1256,6 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
 
-        //tcp_add_tx_delay(skb, tp);
-
 	if (unlikely(err > 0)) {
 		tcp_enter_cwr(sk);
 		err = net_xmit_eval(err);
@@ -1275,8 +1264,8 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 		tcp_update_skb_after_send(sk, oskb, prior_wstamp);
 		tcp_rate_skb_sent(sk, oskb);
 	}
-        
-         if (tcp_accecn_ok(tp) && tp->received_ce_tx != tp->received_ce)
+        if ((tp->ecn_flags & TCP_ACCECN_OK)
+	    && tp->received_ce_tx != tp->received_ce)
 		/* Ensure we'll eventually send the final received_ce value */
 		tcp_send_delayed_ack(sk);
 
@@ -1403,7 +1392,6 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *buff;
 	int nsize, old_factor;
-        long limit;
 	int nlen;
 	u8 flags;
 
@@ -1414,22 +1402,6 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	if (nsize < 0)
 		nsize = 0;
 
-        //Dejene-191112-MPrague
-
-        /* tcp_sendmsg() can overshoot sk_wmem_queued by one full size skb.
-	 * We need some allowance to not penalize applications setting small
-	 * SO_SNDBUF values.
-	 * Also allow first and last skb in retransmit queue to be split.
-	 */
-	limit = sk->sk_sndbuf + 2 * SKB_TRUESIZE(GSO_MAX_SIZE);
-	if (unlikely((sk->sk_wmem_queued >> 1) > limit &&
-		     tcp_queue != TCP_FRAG_IN_WRITE_QUEUE &&
-		     skb != tcp_rtx_queue_head(sk) &&
-		     skb != tcp_rtx_queue_tail(sk))) {
-		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPWQUEUETOOBIG);
-		return -ENOMEM;
-	}
-      //end Dejene
 	if (skb_unclone(skb, gfp))
 		return -ENOMEM;
 
@@ -1448,8 +1420,6 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	TCP_SKB_CB(buff)->seq = TCP_SKB_CB(skb)->seq + len;
 	TCP_SKB_CB(buff)->end_seq = TCP_SKB_CB(skb)->end_seq;
 	TCP_SKB_CB(skb)->end_seq = TCP_SKB_CB(buff)->seq;
-        memcpy(TCP_SKB_CB(buff)->dss, TCP_SKB_CB(skb)->dss, 4 * 6);
-	TCP_SKB_CB(buff)->mptcp_flags |= MPTCPHDR_SEQ;
 
 	/* PSH and FIN should only be set in the second packet. */
 	flags = TCP_SKB_CB(skb)->tcp_flags;
@@ -2019,8 +1989,7 @@ static int tso_fragment(struct sock *sk, struct sk_buff *skb, unsigned int len,
 	TCP_SKB_CB(buff)->seq = TCP_SKB_CB(skb)->seq + len;
 	TCP_SKB_CB(buff)->end_seq = TCP_SKB_CB(skb)->end_seq;
 	TCP_SKB_CB(skb)->end_seq = TCP_SKB_CB(buff)->seq;
-        memcpy(TCP_SKB_CB(buff)->dss, TCP_SKB_CB(skb)->dss, 4 * 6);
-	TCP_SKB_CB(buff)->mptcp_flags |= MPTCPHDR_SEQ;
+
 	/* PSH and FIN should only be set in the second packet. */
 	flags = TCP_SKB_CB(skb)->tcp_flags;
 	TCP_SKB_CB(skb)->tcp_flags = flags & ~(TCPHDR_FIN | TCPHDR_PSH);
@@ -2137,7 +2106,9 @@ static bool tcp_tso_should_defer(struct sock *sk, struct sk_buff *skb,
 		}
 	} else {
 		if (send_win <= skb->len) {
-			*is_rwnd_limited = true; 
+			*is_rwnd_limited = true;
+                        printk("rwnd_limited cwnd %u ssthresh %u \n",tp->snd_cwnd,tp->snd_ssthresh); 
+  
 			return true;
 		}
 	}
@@ -2187,9 +2158,8 @@ static bool tcp_can_coalesce_send_queue_head(struct sock *sk, int len)
 	tcp_for_write_queue_from_safe(skb, next, sk) {
 		if (len <= skb->len)
 			break;
-                //Dejene-191112-MPrague
-                if (unlikely(TCP_SKB_CB(skb)->eor) || tcp_has_tx_tstamp(skb))
-		//if (unlikely(TCP_SKB_CB(skb)->eor))
+
+		if (unlikely(TCP_SKB_CB(skb)->eor))
 			return false;
 
 		len -= skb->len;
@@ -2320,8 +2290,8 @@ static int tcp_mtu_probe(struct sock *sk)
 		}
 
                 TCP_SKB_CB(nskb)->tcp_res_flags |= TCP_SKB_CB(skb)->tcp_res_flags;
-		if (tcp_accecn_ok(tp))
-                    tcp_accecn_copy_skb_cb_ace(skb, nskb);
+		if (tp->ecn_flags & TCP_ACCECN_OK)
+			tcp_accecn_copy_skb_cb_ace(skb, nskb);
 
 		len += copy;
 
@@ -2383,7 +2353,10 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 				  unsigned int factor)
 {
 	unsigned long limit;
-       
+        //struct tcp_sock *tp = tcp_sk(sk);
+        //if (mptcp(tp))
+           //sk_pacing_shift_update(skb->sk, 2);
+
 	limit = max_t(unsigned long,
 		      2 * skb->truesize,
 		      sk->sk_pacing_rate >> sk->sk_pacing_shift);
@@ -2391,20 +2364,6 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 		limit = min_t(unsigned long, limit,
 			      sock_net(sk)->ipv4.sysctl_tcp_limit_output_bytes);
 	limit <<= factor;
-        //Dejene-191112-MPrague
-         //if (static_branch_unlikely(&tcp_tx_delay_enabled) &&
- 	   //      tcp_sk(sk)->tcp_tx_delay) {
- 	//	u64 extra_bytes = (u64)sk->sk_pacing_rate * tcp_sk(sk)->tcp_tx_delay;
- 
- 		/* TSQ is based on skb truesize sum (sk_wmem_alloc), so we
- 		 * approximate our needs assuming an ~100% skb->truesize overhead.
- 		 * USEC_PER_SEC is approximated by 2^20.
- 		 * do_div(extra_bytes, USEC_PER_SEC/2) is replaced by a right shift.
- 		 */
- 	//	extra_bytes >>= (20 - 1);
- 	//	limit += extra_bytes;
- 	//}
-        //end 
 
 	if (refcount_read(&sk->sk_wmem_alloc) > limit) {
 		/* Always send skb if rtx queue is empty.
@@ -3398,8 +3357,6 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	int tcp_header_size;
 	struct tcphdr *th;
 	int mss;
-        //u64 now;
-
 
 	skb = alloc_skb(MAX_TCP_HEADER, GFP_ATOMIC);
 	if (unlikely(!skb)) {
@@ -3431,15 +3388,12 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	mss = tcp_mss_clamp(tp, dst_metric_advmss(dst));
 
 	memset(&opts, 0, sizeof(opts));
-        //now = tcp_clock_ns();
-
 #ifdef CONFIG_SYN_COOKIES
 	if (unlikely(req->cookie_ts))
 		skb->skb_mstamp_ns = cookie_init_timestamp(req);
 	else
 #endif
 		skb->skb_mstamp_ns = tcp_clock_ns();
-
 
 #ifdef CONFIG_TCP_MD5SIG
 	rcu_read_lock();
@@ -3480,9 +3434,7 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 #endif
 
 	/* Do not fool tcpdump (if any), clean our debris */
-	 skb->tstamp = 0;
-        //skb->skb_mstamp_ns = now;
-	//tcp_add_tx_delay(skb, tp);
+	skb->tstamp = 0;
 	return skb;
 }
 EXPORT_SYMBOL(tcp_make_synack);

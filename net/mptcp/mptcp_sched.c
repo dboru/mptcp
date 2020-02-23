@@ -301,7 +301,6 @@ static struct sk_buff *mptcp_rcv_buf_optimization(struct sock *sk, int penal)
 				u32 prior_cwnd = tp_it->snd_cwnd;
 
 				tp_it->snd_cwnd = max(tp_it->snd_cwnd >> 1U, 1U);
-
 				/* If in slow start, do not reduce the ssthresh */
 				if (prior_cwnd >= tp_it->snd_ssthresh)
 					tp_it->snd_ssthresh = max(tp_it->snd_ssthresh >> 1U, 2U);
@@ -375,8 +374,9 @@ static struct sk_buff *__mptcp_next_segment(struct sock *meta_sk, int *reinject)
 			struct sock *subsk = get_available_subflow(meta_sk, NULL,
 								   false);
 			if (!subsk)
-				return NULL;
-
+                         {
+			    return NULL;
+                         }
 			skb = mptcp_rcv_buf_optimization(subsk, 0);
 			if (skb)
 				*reinject = -1;
