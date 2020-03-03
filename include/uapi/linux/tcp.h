@@ -136,12 +136,8 @@ enum {
 
 #define TCP_CM_INQ		TCP_INQ
 
-<<<<<<< HEAD
-//#define TCP_TX_DELAY		37	/* delay outgoing packets by XX usec */
-=======
 #define TCP_TX_DELAY		37	/* delay outgoing packets by XX usec */
 
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 
 #define TCP_REPAIR_ON		1
 #define TCP_REPAIR_OFF		0

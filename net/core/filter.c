@@ -4341,14 +4341,9 @@ BPF_CALL_5(bpf_setsockopt, struct bpf_sock_ops_kern *, bpf_sock,
 			strncpy(name, optval, min_t(long, optlen,
 						    TCP_CA_NAME_MAX-1));
 			name[TCP_CA_NAME_MAX-1] = 0;
-<<<<<<< HEAD
                         ret = tcp_set_congestion_control(sk, name, false,
 							 reinit, true);
 			
-=======
-			ret = tcp_set_congestion_control(sk, name, false,
-							 reinit, true);
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 		} else {
 			struct tcp_sock *tp = tcp_sk(sk);
 

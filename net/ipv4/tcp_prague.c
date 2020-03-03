@@ -212,7 +212,6 @@ static void prague_update_window(struct sock *sk,
 	if (rs->is_ece) {
 		prague_ca(sk)->saw_ce = true;
 		/*return;*/
-               return ;
 	}
 	/* We don't implement PRR at the moment... */
 	/* if (inet_csk(sk)->icsk_ca_state != TCP_CA_Open)
@@ -317,9 +316,9 @@ static void prague_release(struct sock *sk)
 	 * the flag (e.g., could have been set by bpf prog)
 	 */
 	tp->ecn_flags &= ~TCP_ECN_ECT_1;
-	LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, "
-			"received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,
-			tp->received_ce_tx);
+	//LOG(sk, "Releasing: delivered_ce=%u, received_ce=%u, "
+	//		"received_ce_tx: %u\n", tp->delivered_ce, tp->received_ce,
+	//		tp->received_ce_tx);
 }
 
 static void prague_init(struct sock *sk)
@@ -333,10 +332,7 @@ static void prague_init(struct sock *sk)
 		struct tcp_sock *tp = tcp_sk(sk);
 
 		ca->prior_rcv_nxt = tp->rcv_nxt;
-		if (prague_debug == 0)
                      ca->upscaled_alpha = PRAGUE_MAX_ALPHA << prague_shift_g;
-                else
-		   ca->upscaled_alpha = 0;
 		ca->loss_cwnd = 0;
 		ca->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
 		/* Conservatively start with a very low TSO limit */

@@ -1149,18 +1149,9 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	if (unlikely(tcb->tcp_flags & TCPHDR_SYN)) {
 		tcp_options_size = tcp_syn_options(sk, skb, &opts, &md5);
-<<<<<<< HEAD
-	else {
-		tcp_options_size = tcp_established_options(sk, skb, &opts,
-            							   &md5);
-             // Dejene-191112-MPrague
-               /* Force a PSH flag on all (GSO) packets to expedite GRO flush
-=======
 	} else {
-		tcp_options_size = tcp_established_options(sk, skb, &opts,
-							   &md5);
+		tcp_options_size = tcp_established_options(sk, skb, &opts,&md5);
 		/* Force a PSH flag on all (GSO) packets to expedite GRO flush
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 		 * at receiver : This slightly improve GRO performance.
 		 * Note that we do not force the PSH flag for non GSO packets,
 		 * because they might be sent under high congestion events,
@@ -1170,12 +1161,9 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 		 */
 		if (tcp_skb_pcount(skb) > 1)
 			tcb->tcp_flags |= TCPHDR_PSH;
-<<<<<<< HEAD
 
             }
-=======
-	}
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
+	
 	tcp_header_size = tcp_options_size + sizeof(struct tcphdr);
 
 	/* if no packet is in qdisc/device queue, then allow XPS to select
@@ -1279,7 +1267,6 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
 
-        //tcp_add_tx_delay(skb, tp);
 
 	if (unlikely(err > 0)) {
 		tcp_enter_cwr(sk);
@@ -1417,11 +1404,7 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *buff;
 	int nsize, old_factor;
-<<<<<<< HEAD
-        long limit;
-=======
 	long limit;
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 	int nlen;
 	u8 flags;
 
@@ -1432,13 +1415,8 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 	if (nsize < 0)
 		nsize = 0;
 
-<<<<<<< HEAD
-        //Dejene-191112-MPrague
 
         /* tcp_sendmsg() can overshoot sk_wmem_queued by one full size skb.
-=======
-	/* tcp_sendmsg() can overshoot sk_wmem_queued by one full size skb.
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 	 * We need some allowance to not penalize applications setting small
 	 * SO_SNDBUF values.
 	 * Also allow first and last skb in retransmit queue to be split.
@@ -1451,11 +1429,7 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPWQUEUETOOBIG);
 		return -ENOMEM;
 	}
-<<<<<<< HEAD
-      //end Dejene
-=======
 
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 	if (skb_unclone(skb, gfp))
 		return -ENOMEM;
 
@@ -1893,7 +1867,6 @@ static u32 tcp_tso_segs(struct sock *sk, unsigned int mss_now)
 
 	tso_segs = tcp_tso_autosize(sk, mss_now, min_tso);
         if (ca_ops->max_tso_segs) {
-                //printk("tso_segs %u prague tso_burst %u \n",tso_segs,ca_ops->max_tso_segs(sk));
 		tso_segs = min_t(u32, tso_segs, ca_ops->max_tso_segs(sk));
              }
 	return min_t(u32, tso_segs, sk->sk_gso_max_segs);
@@ -1940,8 +1913,7 @@ unsigned int tcp_cwnd_test(const struct tcp_sock *tp,
 	u32 in_flight, cwnd, halfcwnd;
 
 	/* Don't be strict about the congestion window for the final FIN.  */
-	if (skb &&
-	    (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN) &&
+	if ((TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN) &&
 	    tcp_skb_pcount(skb) == 1)
 		return 1;
 
@@ -2046,15 +2018,16 @@ static int tso_fragment(struct sock *sk, struct sk_buff *skb, unsigned int len,
 	TCP_SKB_CB(buff)->seq = TCP_SKB_CB(skb)->seq + len;
 	TCP_SKB_CB(buff)->end_seq = TCP_SKB_CB(skb)->end_seq;
 	TCP_SKB_CB(skb)->end_seq = TCP_SKB_CB(buff)->seq;
-        memcpy(TCP_SKB_CB(buff)->dss, TCP_SKB_CB(skb)->dss, 4 * 6);
-	TCP_SKB_CB(buff)->mptcp_flags |= MPTCPHDR_SEQ;
+        
+	
 	/* PSH and FIN should only be set in the second packet. */
 	flags = TCP_SKB_CB(skb)->tcp_flags;
 	TCP_SKB_CB(skb)->tcp_flags = flags & ~(TCPHDR_FIN | TCPHDR_PSH);
 	TCP_SKB_CB(buff)->tcp_flags = flags;
-
+        TCP_SKB_CB(buff)->tcp_res_flags = TCP_SKB_CB(skb)->tcp_res_flags;
+	TCP_SKB_CB(buff)->sacked = TCP_SKB_CB(skb)->sacked;
 	/* This packet was never sent out yet, so no SACK bits. */
-	TCP_SKB_CB(buff)->sacked = 0;
+	//TCP_SKB_CB(buff)->sacked = 0;
 
 	tcp_skb_fragment_eor(skb, buff);
 
@@ -2214,14 +2187,8 @@ static bool tcp_can_coalesce_send_queue_head(struct sock *sk, int len)
 	tcp_for_write_queue_from_safe(skb, next, sk) {
 		if (len <= skb->len)
 			break;
-<<<<<<< HEAD
-                //Dejene-191112-MPrague
-                if (unlikely(TCP_SKB_CB(skb)->eor) || tcp_has_tx_tstamp(skb))
-		//if (unlikely(TCP_SKB_CB(skb)->eor))
-=======
 
 		if (unlikely(TCP_SKB_CB(skb)->eor) || tcp_has_tx_tstamp(skb))
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 			return false;
 
 		len -= skb->len;
@@ -2425,22 +2392,7 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 		limit = min_t(unsigned long, limit,
 			      sock_net(sk)->ipv4.sysctl_tcp_limit_output_bytes);
 	limit <<= factor;
-        //Dejene-191112-MPrague
-         //if (static_branch_unlikely(&tcp_tx_delay_enabled) &&
- 	   //      tcp_sk(sk)->tcp_tx_delay) {
- 	//	u64 extra_bytes = (u64)sk->sk_pacing_rate * tcp_sk(sk)->tcp_tx_delay;
- 
- 		/* TSQ is based on skb truesize sum (sk_wmem_alloc), so we
- 		 * approximate our needs assuming an ~100% skb->truesize overhead.
- 		 * USEC_PER_SEC is approximated by 2^20.
- 		 * do_div(extra_bytes, USEC_PER_SEC/2) is replaced by a right shift.
- 		 */
- 	//	extra_bytes >>= (20 - 1);
- 	//	limit += extra_bytes;
- 	//}
-        //end 
-
-	if (static_branch_unlikely(&tcp_tx_delay_enabled) &&
+        if (static_branch_unlikely(&tcp_tx_delay_enabled) &&
 	    tcp_sk(sk)->tcp_tx_delay) {
 		u64 extra_bytes = (u64)sk->sk_pacing_rate * tcp_sk(sk)->tcp_tx_delay;
 
@@ -3441,12 +3393,8 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	int tcp_header_size;
 	struct tcphdr *th;
 	int mss;
-<<<<<<< HEAD
-        //u64 now;
 
-=======
 	u64 now;
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 
 	skb = alloc_skb(MAX_TCP_HEADER, GFP_ATOMIC);
 	if (unlikely(!skb)) {
@@ -3478,12 +3426,8 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	mss = tcp_mss_clamp(tp, dst_metric_advmss(dst));
 
 	memset(&opts, 0, sizeof(opts));
-<<<<<<< HEAD
-        //now = tcp_clock_ns();
 
-=======
 	now = tcp_clock_ns();
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 #ifdef CONFIG_SYN_COOKIES
 	if (unlikely(req->cookie_ts))
 		skb->skb_mstamp_ns = cookie_init_timestamp(req);
@@ -3534,16 +3478,11 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	rcu_read_unlock();
 #endif
 
-<<<<<<< HEAD
 	/* Do not fool tcpdump (if any), clean our debris */
 	 skb->tstamp = 0;
-        //skb->skb_mstamp_ns = now;
-	//tcp_add_tx_delay(skb, tp);
-=======
 	skb->skb_mstamp_ns = now;
 	tcp_add_tx_delay(skb, tp);
 
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 	return skb;
 }
 EXPORT_SYMBOL(tcp_make_synack);

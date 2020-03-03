@@ -356,7 +356,7 @@ static void mprague_cong_control(struct sock *sk, const struct rate_sample *rs)
 	mprague_update_window(sk, rs);
 	if (mprague_rtt_complete(sk))
 		mprague_rtt_expired(sk);
-        //if (mprague_debug==1)
+        if (mprague_debug==0)
 	  mprague_update_pacing_rate(sk);
 }
 
@@ -480,7 +480,7 @@ static void mprague_init(struct sock *sk)
 			//printk("Mprague init !\n");
 			if (mprague_ect)
 	              	   tp->ecn_flags |= TCP_ECN_ECT_1;
-                        // if (mprague_debug==1)
+                        if (mprague_debug==0)
 			    cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,SK_PACING_NEEDED);
 
 			mprague_reset(tp, ca);

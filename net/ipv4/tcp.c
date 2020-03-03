@@ -482,22 +482,7 @@ void tcp_init_sock(struct sock *sk)
 }
 EXPORT_SYMBOL(tcp_init_sock);
 
-<<<<<<< HEAD
 
-void tcp_init_transfer(struct sock *sk, int bpf_op)
-{
-	struct inet_connection_sock *icsk = inet_csk(sk);
-
-	tcp_mtup_init(sk);
-	icsk->icsk_af_ops->rebuild_header(sk);
-	tcp_init_metrics(sk);
-	tcp_call_bpf(sk, bpf_op, 0, NULL);
-	tcp_init_congestion_control(sk);
-	tcp_sk(sk)->ops->init_buffer_space(sk);
-}
-
-=======
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 static void tcp_tx_timestamp(struct sock *sk, u16 tsflags)
 {
 	struct sk_buff *skb = tcp_write_queue_tail(sk);
@@ -2904,24 +2889,6 @@ static void tcp_enable_tx_delay(void)
 }
 
 /*
-DEFINE_STATIC_KEY_FALSE(tcp_tx_delay_enabled);
-EXPORT_SYMBOL(tcp_tx_delay_enabled);
-
-static void tcp_enable_tx_delay(void)
-{
-	if (!static_branch_unlikely(&tcp_tx_delay_enabled)) {
-		static int __tcp_tx_delay_enabled = 0;
-
-		if (cmpxchg(&__tcp_tx_delay_enabled, 0, 1) == 0) {
-			static_branch_enable(&tcp_tx_delay_enabled);
-			pr_info("TCP_TX_DELAY enabled\n");
-		}
-	}
-}
-
-*/
-
-/*
  *	Socket option code for TCP.
  */
 static int do_tcp_setsockopt(struct sock *sk, int level,
@@ -2951,11 +2918,7 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		err = tcp_set_congestion_control(sk, name, true, true,
 						 ns_capable(sock_net(sk)->user_ns,
 							    CAP_NET_ADMIN));
-<<<<<<< HEAD
-                release_sock(sk);
-=======
 		release_sock(sk);
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 		return err;
 	}
 	case TCP_ULP: {
@@ -3364,20 +3327,12 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 		else
 			tp->recvmsg_inq = val;
 		break;
-<<<<<<< HEAD
-        /*case TCP_TX_DELAY:
-=======
 	case TCP_TX_DELAY:
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 		if (val)
 			tcp_enable_tx_delay();
 		tp->tcp_tx_delay = val;
 		break;
-<<<<<<< HEAD
-         */
 
-=======
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 	default:
 		err = -ENOPROTOOPT;
 		break;
@@ -3468,7 +3423,7 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info, bool no_lock)
 		return;
 	}
 
-	if (!no_lock)
+	if (!no_lock) 
 		slow = lock_sock_fast(sk);
 
 	info->tcpi_ca_state = icsk->icsk_ca_state;
@@ -3544,7 +3499,7 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info, bool no_lock)
 	info->tcpi_reord_seen = tp->reord_seen;
 	info->tcpi_rcv_ooopack = tp->rcv_ooopack;
 	info->tcpi_snd_wnd = tp->snd_wnd;
-
+        //info->tcpi_fastopen_client_fail = tp->fastopen_client_fail;
 	if (!no_lock)
 		unlock_sock_fast(sk, slow);
 }

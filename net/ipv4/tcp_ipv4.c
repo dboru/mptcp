@@ -676,11 +676,7 @@ void tcp_v4_send_reset(const struct sock *sk, struct sk_buff *skb)
 #endif
 	u64 transmit_time = 0;
 	struct sock *ctl_sk;
-<<<<<<< HEAD
-       // u64 transmit_time = 0;
-=======
 	struct net *net;
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 
 	/* Never send a reset in response to a reset. */
 	if (th->rst)

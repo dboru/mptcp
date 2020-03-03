@@ -297,12 +297,8 @@ struct tcp_sock {
 		is_cwnd_limited:1,/* forward progress limited by snd_cwnd? */
 		syn_smc:1;	/* SYN includes SMC */
 	u32	tlp_high_seq;	/* snd_nxt at the time of TLP retransmit. */
-<<<<<<< HEAD
-        //u32	tcp_tx_delay;	/* delay (in usec) added to TX packets */
-=======
 
 	u32	tcp_tx_delay;	/* delay (in usec) added to TX packets */
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 	u64	tcp_wstamp_ns;	/* departure time for next sent data packet */
 	u64	tcp_clock_cache; /* cache last tcp_clock_ns() (see tcp_mstamp_refresh()) */
 
@@ -592,14 +588,11 @@ static inline u16 tcp_mss_clamp(const struct tcp_sock *tp, u16 mss)
 	return (user_mss && user_mss < mss) ? user_mss : mss;
 }
 
-<<<<<<< HEAD
 static inline u8 tcp_accecn_ace(const struct tcphdr *th)
 {
 	return (th->ae << 2) | (th->cwr << 1) | th->ece;
 }
-=======
 int tcp_skb_shift(struct sk_buff *to, struct sk_buff *from, int pcount,
 		  int shiftlen);
->>>>>>> 1efcfb3b902acc1c01321289363a4ae52a783039
 
 #endif	/* _LINUX_TCP_H */

@@ -12,7 +12,7 @@
 #include <net/protocol.h>
 
 static void tcp_gso_tstamp(struct sk_buff *skb, unsigned int ts_seq,
-			   unsigned int seq, unsigned int mss)
+		unsigned int seq, unsigned int mss)
 {
 	while (skb) {
 		if (before(ts_seq, seq + mss)) {
@@ -27,7 +27,7 @@ static void tcp_gso_tstamp(struct sk_buff *skb, unsigned int ts_seq,
 }
 
 static struct sk_buff *tcp4_gso_segment(struct sk_buff *skb,
-					netdev_features_t features)
+		netdev_features_t features)
 {
 	if (!(skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4))
 		return ERR_PTR(-EINVAL);
@@ -52,7 +52,7 @@ static struct sk_buff *tcp4_gso_segment(struct sk_buff *skb,
 }
 
 struct sk_buff *tcp_gso_segment(struct sk_buff *skb,
-				netdev_features_t features)
+		netdev_features_t features)
 {
 	struct sk_buff *segs = ERR_PTR(-EINVAL);
 	unsigned int sum_truesize = 0;
@@ -119,7 +119,7 @@ struct sk_buff *tcp_gso_segment(struct sk_buff *skb,
 		tcp_gso_tstamp(segs, skb_shinfo(gso_skb)->tskey, seq, mss);
 
 	newcheck = ~csum_fold((__force __wsum)((__force u32)th->check +
-					       (__force u32)delta));
+				(__force u32)delta));
 
 	while (skb->next) {
 		th->fin = th->psh = 0;
@@ -141,7 +141,7 @@ struct sk_buff *tcp_gso_segment(struct sk_buff *skb,
 
 		th->seq = htonl(seq);
 		if (!(skb_shinfo(skb)->gso_type & SKB_GSO_TCP_ACCECN))
-                     th->cwr = 0;
+			th->cwr = 0;
 	}
 
 	/* Following permits TCP Small Queues to work well with GSO :
@@ -167,7 +167,7 @@ struct sk_buff *tcp_gso_segment(struct sk_buff *skb,
 
 	delta = htonl(oldlen + (skb_tail_pointer(skb) -
 				skb_transport_header(skb)) +
-		      skb->data_len);
+			skb->data_len);
 	th->check = ~csum_fold((__force __wsum)((__force u32)th->check +
 				(__force u32)delta));
 	if (skb->ip_summed == CHECKSUM_PARTIAL)
@@ -236,24 +236,24 @@ struct sk_buff *tcp_gro_receive(struct list_head *head, struct sk_buff *skb)
 
 found:
 	/* Include the IP ID check below from the inner most IP hdr */
+	/* Include the IP ID check below from the inner most IP hdr */
 	flush = NAPI_GRO_CB(p)->flush;
-	flush |= (__force int)(flags & TCP_FLAG_CWR);
 	flush |= (__force int)((flags ^ tcp_flag_word(th2)) &
-		  ~(TCP_FLAG_AE | TCP_FLAG_CWR | TCP_FLAG_ECE
-		    | TCP_FLAG_FIN | TCP_FLAG_PSH));
-
-       	flush |= (__force int)(th->ack_seq ^ th2->ack_seq);
+			~(TCP_FLAG_AE | TCP_FLAG_CWR | TCP_FLAG_ECE
+				| TCP_FLAG_FIN | TCP_FLAG_PSH));
+	flush |= (__force int)(th->ack_seq ^ th2->ack_seq);
 	for (i = sizeof(*th); i < thlen; i += 4)
 		flush |= *(u32 *)((u8 *)th + i) ^
-			 *(u32 *)((u8 *)th2 + i);
+			*(u32 *)((u8 *)th2 + i);
+
 
 	/* When we receive our second frame we can made a decision on if we
 	 * continue this flow as an atomic flow with a fixed ID or if we use
 	 * an incrementing ID.
 	 */
 	if (NAPI_GRO_CB(p)->flush_id != 1 ||
-	    NAPI_GRO_CB(p)->count != 1 ||
-	    !NAPI_GRO_CB(p)->is_atomic)
+			NAPI_GRO_CB(p)->count != 1 ||
+			!NAPI_GRO_CB(p)->is_atomic)
 		flush |= NAPI_GRO_CB(p)->flush_id;
 	else
 		NAPI_GRO_CB(p)->is_atomic = false;
@@ -276,8 +276,8 @@ found:
 out_check_final:
 	flush = len < mss;
 	flush |= (__force int)(flags & (TCP_FLAG_URG | TCP_FLAG_PSH |
-					TCP_FLAG_RST | TCP_FLAG_SYN |
-					TCP_FLAG_FIN));
+				TCP_FLAG_RST | TCP_FLAG_SYN |
+				TCP_FLAG_FIN));
 
 	if (p && (!NAPI_GRO_CB(skb)->same_flow || flush))
 		pp = p;
@@ -305,13 +305,13 @@ int tcp_gro_complete(struct sk_buff *skb)
 }
 EXPORT_SYMBOL(tcp_gro_complete);
 
-INDIRECT_CALLABLE_SCOPE
+	INDIRECT_CALLABLE_SCOPE
 struct sk_buff *tcp4_gro_receive(struct list_head *head, struct sk_buff *skb)
 {
 	/* Don't bother verifying checksum if we're going to flush anyway. */
 	if (!NAPI_GRO_CB(skb)->flush &&
-	    skb_gro_checksum_validate(skb, IPPROTO_TCP,
-				      inet_gro_compute_pseudo)) {
+			skb_gro_checksum_validate(skb, IPPROTO_TCP,
+				inet_gro_compute_pseudo)) {
 		NAPI_GRO_CB(skb)->flush = 1;
 		return NULL;
 	}
@@ -325,7 +325,7 @@ INDIRECT_CALLABLE_SCOPE int tcp4_gro_complete(struct sk_buff *skb, int thoff)
 	struct tcphdr *th = tcp_hdr(skb);
 
 	th->check = ~tcp_v4_check(skb->len - thoff, iph->saddr,
-				  iph->daddr, 0);
+			iph->daddr, 0);
 	skb_shinfo(skb)->gso_type |= SKB_GSO_TCPV4;
 
 	if (NAPI_GRO_CB(skb)->is_atomic)
