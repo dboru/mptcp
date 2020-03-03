@@ -776,6 +776,26 @@ static void mptcp_set_state(struct sock *sk)
 	}
 }
 
+static int mptcp_set_congestion_control(struct sock *meta_sk, const char *name,
+					bool load, bool reinit, bool cap_net_admin)
+{
+	struct mptcp_tcp_sock *mptcp;
+	int err, result = 0;
+
+	result = __tcp_set_congestion_control(meta_sk, name, load, reinit, cap_net_admin);
+
+	tcp_sk(meta_sk)->mpcb->tcp_ca_explicit_set = true;
+
+	mptcp_for_each_sub(tcp_sk(meta_sk)->mpcb, mptcp) {
+		struct sock *sk_it = mptcp_to_sock(mptcp);
+
+		err = __tcp_set_congestion_control(sk_it, name, load, reinit, cap_net_admin);
+		if (err)
+			result = err;
+	}
+	return result;
+}
+
 static void mptcp_assign_congestion_control(struct sock *sk)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
@@ -784,8 +804,11 @@ static void mptcp_assign_congestion_control(struct sock *sk)
 
 	/* Congestion control is the same as meta. Thus, it has been
 	 * try_module_get'd by tcp_assign_congestion_control.
+	 * Congestion control on meta was not explicitly configured by
+	 * application, leave default or route based.
 	 */
-	if (icsk->icsk_ca_ops == ca)
+	if (icsk->icsk_ca_ops == ca ||
+	    !tcp_sk(mptcp_meta_sk(sk))->mpcb->tcp_ca_explicit_set)
 		return;
 
 	/* Use the same congestion control as set on the meta-sk */
@@ -797,6 +820,7 @@ static void mptcp_assign_congestion_control(struct sock *sk)
 		WARN(1, "Could not get the congestion control!");
 		return;
 	}
+	module_put(icsk->icsk_ca_ops->owner);
 	icsk->icsk_ca_ops = ca;
 
 	/* Clear out private data before diag gets it and
@@ -1115,7 +1139,6 @@ static const struct tcp_sock_ops mptcp_meta_specific = {
 	.__select_window		= __mptcp_select_window,
 	.select_window			= mptcp_select_window,
 	.select_initial_window		= mptcp_select_initial_window,
-	.select_size			= mptcp_select_size,
 	.init_buffer_space		= mptcp_init_buffer_space,
 	.set_rto			= mptcp_tcp_set_rto,
 	.should_expand_sndbuf		= mptcp_should_expand_sndbuf,
@@ -1126,13 +1149,13 @@ static const struct tcp_sock_ops mptcp_meta_specific = {
 	.retransmit_timer		= mptcp_meta_retransmit_timer,
 	.time_wait			= mptcp_time_wait,
 	.cleanup_rbuf			= mptcp_cleanup_rbuf,
+	.set_cong_ctrl                  = mptcp_set_congestion_control,
 };
 
 static const struct tcp_sock_ops mptcp_sub_specific = {
 	.__select_window		= __mptcp_select_window,
 	.select_window			= mptcp_select_window,
 	.select_initial_window		= mptcp_select_initial_window,
-	.select_size			= mptcp_select_size,
 	.init_buffer_space		= mptcp_init_buffer_space,
 	.set_rto			= mptcp_tcp_set_rto,
 	.should_expand_sndbuf		= mptcp_should_expand_sndbuf,
@@ -1143,6 +1166,7 @@ static const struct tcp_sock_ops mptcp_sub_specific = {
 	.retransmit_timer		= mptcp_sub_retransmit_timer,
 	.time_wait			= tcp_time_wait,
 	.cleanup_rbuf			= tcp_cleanup_rbuf,
+	.set_cong_ctrl                  = __tcp_set_congestion_control,
 };
 
 static int mptcp_alloc_mpcb(struct sock *meta_sk, __u64 remote_key,
@@ -1166,6 +1190,7 @@ static int mptcp_alloc_mpcb(struct sock *meta_sk, __u64 remote_key,
 		goto err_alloc_master;
 
 	master_tp = tcp_sk(master_sk);
+	master_tp->inside_tk_table = 0;
 
 	mpcb = kmem_cache_zalloc(mptcp_cb_cache, GFP_ATOMIC);
 	if (!mpcb)
@@ -1237,7 +1262,6 @@ static int mptcp_alloc_mpcb(struct sock *meta_sk, __u64 remote_key,
 		local_bh_enable();
 		rcu_read_unlock();
 	}
-	master_tp->inside_tk_table = 0;
 
 #if IS_ENABLED(CONFIG_IPV6)
 	if (meta_icsk->icsk_af_ops == &mptcp_v6_mapped) {
@@ -2189,11 +2213,6 @@ int mptcp_check_req_fastopen(struct sock *child, struct request_sock *req)
 	/* Handled by the master_sk */
 	tcp_sk(meta_sk)->fastopen_rsk = NULL;
 
-	/* Subflow establishment is now lockless, drop the lock here it will
-	 * be taken again in tcp_child_process().
-	 */
-	bh_unlock_sock(meta_sk);
-
 	return 0;
 }
 
@@ -2242,11 +2261,6 @@ int mptcp_check_req_master(struct sock *sk, struct sock *child,
 		}
 	}
 
-	/* Subflow establishment is now lockless, drop the lock here it will
-	 * be taken again in tcp_child_process().
-	 */
-	bh_unlock_sock(meta_sk);
-
 	return 0;
 }
 
@@ -2261,8 +2275,6 @@ struct sock *mptcp_check_req_child(struct sock *meta_sk,
 	struct mptcp_request_sock *mtreq = mptcp_rsk(req);
 	struct tcp_sock *child_tp = tcp_sk(child);
 	u8 hash_mac_check[20];
-
-	child_tp->inside_tk_table = 0;
 
 	if (!mopt->join_ack) {
 		MPTCP_INC_STATS(sock_net(meta_sk), MPTCP_MIB_JOINACKFAIL);
@@ -2350,6 +2362,7 @@ teardown:
 	reqsk_queue_removed(&inet_csk(meta_sk)->icsk_accept_queue, req);
 	inet_csk_prepare_forced_close(child);
 	tcp_done(child);
+	bh_unlock_sock(meta_sk);
 	return meta_sk;
 }
 
@@ -2410,11 +2423,12 @@ void mptcp_twsk_destructor(struct tcp_timewait_sock *tw)
 		if (tw->mptcp_tw->in_list) {
 			list_del_rcu(&tw->mptcp_tw->list);
 			tw->mptcp_tw->in_list = 0;
+			/* Put, because we added it to the list */
+			mptcp_mpcb_put(mpcb);
 		}
 		spin_unlock(&mpcb->mpcb_list_lock);
 
-		/* Twice, because we increased it above */
-		mptcp_mpcb_put(mpcb);
+		/* Second time, because we increased it above */
 		mptcp_mpcb_put(mpcb);
 	}
 

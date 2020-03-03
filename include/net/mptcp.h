@@ -282,7 +282,8 @@ struct mptcp_cb {
 		dfin_combined:1,   /* Was the DFIN combined with subflow-fin? */
 		passive_close:1,
 		snd_hiseq_index:1, /* Index in snd_high_order of snd_nxt */
-		rcv_hiseq_index:1; /* Index in rcv_high_order of rcv_nxt */
+		rcv_hiseq_index:1, /* Index in rcv_high_order of rcv_nxt */
+		tcp_ca_explicit_set:1; /* was meta CC set by app? */
 
 #define MPTCP_SCHED_DATA_SIZE 8
 	u8 mptcp_sched[MPTCP_SCHED_DATA_SIZE] __aligned(8);
@@ -815,7 +816,6 @@ void mptcp_select_initial_window(const struct sock *sk, int __space, __u32 mss,
 				 int wscale_ok, __u8 *rcv_wscale,
 				 __u32 init_rcv_wnd);
 unsigned int mptcp_current_mss(struct sock *meta_sk);
-int mptcp_select_size(const struct sock *meta_sk, bool first_skb, bool zc);
 void mptcp_hmac_sha1(const u8 *key_1, const u8 *key_2, u32 *hash_out,
 		     int arg_num, ...);
 void mptcp_clean_rtx_infinite(const struct sk_buff *skb, struct sock *sk);
