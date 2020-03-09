@@ -45,7 +45,7 @@ struct mprague {
 	u32 loss_cwnd;
 	u32 max_tso_burst;
 	bool was_ce;
-	bool saw_ce;	
+	bool saw_ce;
 };
 
 
@@ -275,9 +275,13 @@ exit:
 
 static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
+	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
+	const struct mptcp_tcp_sock *m_mptcp;
+	
 	struct tcp_sock *tp = tcp_sk(sk);
-	int snd_cwnd = 0;
+	int snd_cwnd = 0,cwnd_old = 0;
 	u64 beta;
+	int cnt_subflows = 0;
 
 	if (!mptcp(tp) ) {
 		tcp_reno_cong_avoid(sk, ack, acked);
@@ -296,6 +300,16 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		return;
 	}
 
+	mptcp_for_each_sub(mpcb, m_mptcp) {
+		cnt_subflows+=1;
+	}
+        /*use reno_cong increase for one subflow*/
+	if (cnt_subflows <= 1) {
+	      tcp_reno_cong_avoid(sk,ack,acked);
+	      return; 
+          }
+          
+
 	if (mprague_get_forced(mptcp_meta_sk(sk)) ) {
 		mprague_recalc_beta(sk);
 		mprague_set_forced(mptcp_meta_sk(sk), 0);
@@ -304,9 +318,9 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	beta = mprague_get_beta(mptcp_meta_sk(sk));
 
 	/* This may happen, if at the initialization, the mpcb
-	 *          * was not yet attached to the sock, and thus
-	 *                   * initializing beta failed.
-	 *                            */
+	 * was not yet attached to the sock, and thus  initializing beta failed.
+	 */
+
 	if (unlikely(!beta))
 		beta = beta_scale;
 
@@ -314,25 +328,35 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (snd_cwnd < tp->snd_cwnd)
 		snd_cwnd = tp->snd_cwnd;
+        
+	cwnd_old = tp->snd_cwnd;
 
-	if (tp->snd_cwnd_cnt >= snd_cwnd) {
-		if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
-			tp->snd_cwnd++;
-                        mprague_recalc_beta(sk);
-		}
 
-		tp->snd_cwnd_cnt = 0;
-	} else {
-		tp->snd_cwnd_cnt++;
-	}
+        /*
+        int cwnd_inc=0;
+        if (tp->snd_cwnd_cnt >= snd_cwnd) {
+		   tp->snd_cwnd_cnt = 0;
+		   tp->snd_cwnd++;
+		   cwnd_inc=1;
+	   }
+	   tp->snd_cwnd_cnt += acked;
+	   if (tp->snd_cwnd_cnt >= snd_cwnd) {
+		   u32 delta = tp->snd_cwnd_cnt / snd_cwnd;
+		   tp->snd_cwnd_cnt -= delta * snd_cwnd;
+		   tp->snd_cwnd += delta;
+		   cwnd_inc=1;
+	   }
 
-   //u16 dport = ntohs(inet_sk(sk)->inet_dport),
-   //sport = ntohs(inet_sk(sk)->inet_sport);
-        //if (mprague_debug == 1) {
-             //snprintf("%pI4:%u-%pI4:%u", &sk->sk_rcv_saddr, sport,&sk->sk_daddr, dport);
-          //   printk("Ip %pIS  beta %llu cwnd %u sshthresh %u \n",&sk->sk_rcv_saddr,beta,tp->snd_cwnd,tp->snd_ssthresh);
-            //  }
+	   if (cwnd_inc)
+	       mprague_recalc_beta(sk);
+	   tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp); 
+           */
 
+	   tcp_cong_avoid_ai(tp, snd_cwnd, acked);
+           if (tp->snd_cwnd > cwnd_old)
+		   mprague_recalc_beta(sk);
+
+   
 }
 
 static void mprague_update_window(struct sock *sk,
@@ -346,7 +370,8 @@ static void mprague_update_window(struct sock *sk,
 	/* We don't implement PRR at the moment... */
 	/* if (inet_csk(sk)->icsk_ca_state != TCP_CA_Open)
 		return; */
-                
+          //tcp_reno_cong_avoid(sk, 0, rs->acked_sacked);
+
 	  mprague_cong_avoid(sk, 0, rs->acked_sacked);
  }
 
@@ -388,7 +413,8 @@ static void mprague_enter_cwr(struct sock *sk)
 static void mprague_state(struct sock *sk, u8 new_state)
 {
 
-       u8 old_state = inet_csk(sk)->icsk_ca_state;
+	u8 old_state = inet_csk(sk)->icsk_ca_state;
+       
 
 	if (new_state == old_state)
 		return;
@@ -403,9 +429,9 @@ static void mprague_state(struct sock *sk, u8 new_state)
 			break;
 	}
 
-	if (mptcp(tcp_sk(sk)))
-		mprague_set_forced(mptcp_meta_sk(sk), 1);
-
+	if (!mptcp(tcp_sk(sk)))
+	      return;
+        mprague_set_forced(mptcp_meta_sk(sk), 1);
 }
 
 
@@ -477,7 +503,6 @@ static void mprague_init(struct sock *sk)
                         ca->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
 			/* Conservatively start with a very low TSO limit */
 			ca->max_tso_burst = 1;
-			//printk("Mprague init !\n");
 			if (mprague_ect)
 	              	   tp->ecn_flags |= TCP_ECN_ECT_1;
                         if (mprague_debug==0)
