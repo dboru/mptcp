@@ -37,7 +37,7 @@ static struct tcp_congestion_ops mprague_reno;
 struct mprague {
 	u64  beta;
 	bool forced_update;
-        u64 upscaled_alpha;
+	u64 upscaled_alpha;
 	u32 old_delivered;
 	u32 old_delivered_ce;
 	u32 prior_rcv_nxt;
@@ -138,11 +138,11 @@ static u32 mprague_ssthresh(struct sock *sk)
 	u64 reduction;
 
 	ca->loss_cwnd = tp->snd_cwnd;
-	
-        reduction = ((ca->upscaled_alpha >> mprague_shift_g) * tp->snd_cwnd
+
+	reduction = ((ca->upscaled_alpha >> mprague_shift_g) * tp->snd_cwnd
 			/* Unbias the rounding by adding 1/2 */
 			+ MPRAGUE_MAX_ALPHA) >> (MPRAGUE_ALPHA_BITS  + 1U);
-        return max(tp->snd_cwnd - (u32)reduction, 2U);
+	return max(tp->snd_cwnd - (u32)reduction, 2U);
 }
 
 
@@ -176,7 +176,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
 	WRITE_ONCE(sk->sk_pacing_rate, rate);
 
 	max_burst = div_u64(rate * mprague_burst_usec,
-			    tp->mss_cache * USEC_PER_SEC);
+			tp->mss_cache * USEC_PER_SEC);
 	if (likely(pacing_rate)) {
 		max_burst *= rate;
 		do_div(max_burst, pacing_rate);
@@ -230,7 +230,7 @@ static void mprague_recalc_beta( const struct sock *sk)
 	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
 	const struct mptcp_tcp_sock *mptcp;
 
-	u64 beta = 1;
+	u64 beta = 0;
 	u32 best_rtt = 0xffffffff;
 	int can_send = 0;
 
@@ -248,10 +248,11 @@ static void mprague_recalc_beta( const struct sock *sk)
 		/* We need to look for the path that provides the minimum RTT*/
 		if (sub_tp->srtt_us < best_rtt)
 			best_rtt = sub_tp->srtt_us;
-               	}
+	}
 
 	/* No subflow is able to send - we don't care anymore */
 	if (unlikely(!can_send)){
+		beta = 1;
 		goto exit;
 	}
 
@@ -265,9 +266,11 @@ static void mprague_recalc_beta( const struct sock *sk)
 	}
 
 	if (unlikely(!beta))
-		beta = beta_scale;
+		beta = 1;
 
-exit:
+exit:  
+	if (!beta)
+		beta = 1;
 	mprague_set_beta(mptcp_meta_sk(sk), beta);
 
 }
@@ -275,13 +278,10 @@ exit:
 
 static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
-	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
-	const struct mptcp_tcp_sock *m_mptcp;
-	
+
 	struct tcp_sock *tp = tcp_sk(sk);
 	int snd_cwnd = 0,cwnd_old = 0;
 	u64 beta;
-	int cnt_subflows = 0;
 
 	if (!mptcp(tp) ) {
 		tcp_reno_cong_avoid(sk, ack, acked);
@@ -299,16 +299,6 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		mprague_recalc_beta(sk);
 		return;
 	}
-
-	mptcp_for_each_sub(mpcb, m_mptcp) {
-		cnt_subflows+=1;
-	}
-        /*use reno_cong increase for one subflow*/
-	if (cnt_subflows <= 1) {
-	      tcp_reno_cong_avoid(sk,ack,acked);
-	      return; 
-          }
-          
 
 	if (mprague_get_forced(mptcp_meta_sk(sk)) ) {
 		mprague_recalc_beta(sk);
@@ -328,39 +318,17 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (snd_cwnd < tp->snd_cwnd)
 		snd_cwnd = tp->snd_cwnd;
-        
+
 	cwnd_old = tp->snd_cwnd;
+	tcp_cong_avoid_ai(tp, snd_cwnd, acked);
+	if (tp->snd_cwnd > cwnd_old)
+		mprague_recalc_beta(sk);
 
 
-        /*
-        int cwnd_inc=0;
-        if (tp->snd_cwnd_cnt >= snd_cwnd) {
-		   tp->snd_cwnd_cnt = 0;
-		   tp->snd_cwnd++;
-		   cwnd_inc=1;
-	   }
-	   tp->snd_cwnd_cnt += acked;
-	   if (tp->snd_cwnd_cnt >= snd_cwnd) {
-		   u32 delta = tp->snd_cwnd_cnt / snd_cwnd;
-		   tp->snd_cwnd_cnt -= delta * snd_cwnd;
-		   tp->snd_cwnd += delta;
-		   cwnd_inc=1;
-	   }
-
-	   if (cwnd_inc)
-	       mprague_recalc_beta(sk);
-	   tp->snd_cwnd = min(tp->snd_cwnd, tp->snd_cwnd_clamp); 
-           */
-
-	   tcp_cong_avoid_ai(tp, snd_cwnd, acked);
-           if (tp->snd_cwnd > cwnd_old)
-		   mprague_recalc_beta(sk);
-
-   
 }
 
 static void mprague_update_window(struct sock *sk,
-				 const struct rate_sample *rs)
+		const struct rate_sample *rs)
 {
 	/* Do not increase cwnd for ACKs indicating congestion */
 	if (rs->is_ece ) {
@@ -369,11 +337,10 @@ static void mprague_update_window(struct sock *sk,
 	}
 	/* We don't implement PRR at the moment... */
 	/* if (inet_csk(sk)->icsk_ca_state != TCP_CA_Open)
-		return; */
-          //tcp_reno_cong_avoid(sk, 0, rs->acked_sacked);
+	   return; */
 
-	  mprague_cong_avoid(sk, 0, rs->acked_sacked);
- }
+	mprague_cong_avoid(sk, 0, rs->acked_sacked);
+}
 
 
 static void mprague_cong_control(struct sock *sk, const struct rate_sample *rs)
@@ -381,8 +348,8 @@ static void mprague_cong_control(struct sock *sk, const struct rate_sample *rs)
 	mprague_update_window(sk, rs);
 	if (mprague_rtt_complete(sk))
 		mprague_rtt_expired(sk);
-        if (mprague_debug==0)
-	  mprague_update_pacing_rate(sk);
+	if (mprague_debug==0)
+		mprague_update_pacing_rate(sk);
 }
 
 
@@ -407,37 +374,40 @@ static void mprague_enter_cwr(struct sock *sk)
 	tp->snd_cwnd = tp->snd_ssthresh;
 	tp->snd_ssthresh = tp->snd_cwnd;
 	tp->snd_cwnd_stamp = tcp_jiffies32;
-        
+
 }
 
 static void mprague_state(struct sock *sk, u8 new_state)
 {
 
 	u8 old_state = inet_csk(sk)->icsk_ca_state;
-       
+
+	if (!mptcp(tcp_sk(sk)))
+		return;
 
 	if (new_state == old_state)
 		return;
 	switch (new_state) {
 		case TCP_CA_Recovery:
 			mprague_react_to_loss(sk);
+			mprague_set_forced(mptcp_meta_sk(sk), 1);
 			break;
 		case TCP_CA_CWR:
-		       mprague_enter_cwr(sk);	
-                       break;
+			mprague_enter_cwr(sk);
+			mprague_set_forced(mptcp_meta_sk(sk), 1);
+			break;
 		default:
 			break;
 	}
 
-	if (!mptcp(tcp_sk(sk)))
-	      return;
-        mprague_set_forced(mptcp_meta_sk(sk), 1);
 }
 
 
 static void mprague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 {  
 	struct tcp_sock *tp = tcp_sk(sk);
+	if (!mptcp(tp))
+		return;
 
 	switch(ev) {
 		case CA_EVENT_ECN_IS_CE:
@@ -454,8 +424,7 @@ static void mprague_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
 			 * during this window.
 			 */
 			mprague_react_to_loss(sk);
-			if(mptcp(tp))
-				mprague_recalc_beta(sk);
+			mprague_set_forced(mptcp_meta_sk(sk),1);
 			break;
 		default:
 			/* Ignore everything else */
@@ -492,25 +461,25 @@ static void mprague_init(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	if (mptcp(tcp_sk(sk)) && ( tcp_ecn_ok(tp) || ( (sk->sk_state == TCP_LISTEN || sk->sk_state == TCP_CLOSE)))) {
-			struct mprague *ca = mprague_ca(sk);
-			mprague_set_forced(mptcp_meta_sk(sk), 0);
-			mprague_set_beta(mptcp_meta_sk(sk), beta_scale);
+		struct mprague *ca = mprague_ca(sk);
+		mprague_set_forced(mptcp_meta_sk(sk), 0);
+		mprague_set_beta(mptcp_meta_sk(sk), beta_scale);
 
-			ca->prior_rcv_nxt = tp->rcv_nxt;
-			
-                        ca->upscaled_alpha = MPRAGUE_MAX_ALPHA << mprague_shift_g;
-			ca->loss_cwnd = 0;
-                        ca->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
-			/* Conservatively start with a very low TSO limit */
-			ca->max_tso_burst = 1;
-			if (mprague_ect)
-	              	   tp->ecn_flags |= TCP_ECN_ECT_1;
-                        if (mprague_debug==0)
-			    cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,SK_PACING_NEEDED);
+		ca->prior_rcv_nxt = tp->rcv_nxt;
 
-			mprague_reset(tp, ca);
-			return;
-		} 
+		ca->upscaled_alpha = MPRAGUE_MAX_ALPHA << mprague_shift_g;
+		ca->loss_cwnd = 0;
+		ca->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
+		/* Conservatively start with a very low TSO limit */
+		ca->max_tso_burst = 1;
+		if (mprague_ect)
+			tp->ecn_flags |= TCP_ECN_ECT_1;
+		if (mprague_debug==0)
+			cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,SK_PACING_NEEDED);
+
+		mprague_reset(tp, ca);
+		return;
+	} 
 	/* Cannot use Prague without AccECN
 	 * TODO(otilmans) If TCP_ECN_OK, we can trick the receiver to echo few
 	 * ECEs per CE received by setting CWR at most once every two segments.
