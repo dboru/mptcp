@@ -4879,8 +4879,7 @@ merge_right:
 		tp->ooo_last_skb = skb;
 
 add_sack:
-	//if (tcp_is_sack(tp) && seq != end_seq) //on 20-03-03 mptcp
-	if (tcp_is_sack(tp))
+	if (tcp_is_sack(tp) && seq != end_seq)
 		tcp_sack_new_ofo_skb(sk, seq, end_seq);
 end:
 	if (skb) {
