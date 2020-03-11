@@ -194,5 +194,6 @@ void tcp_rate_check_app_limited(struct sock *sk)
 	    tp->lost_out <= tp->retrans_out)
 		tp->app_limited =
 			(tp->delivered + tcp_packets_in_flight(tp)) ? : 1;
+	     
 }
 EXPORT_SYMBOL_GPL(tcp_rate_check_app_limited);

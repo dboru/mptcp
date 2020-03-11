@@ -75,6 +75,11 @@ static unsigned int mprague_debug __read_mostly = 0;
 module_param(mprague_debug, uint, 0644);
 MODULE_PARM_DESC(mprague_debug, "mprague_debug debug parameter default 0");
 
+static u32 mprague_burst_shift __read_mostly = 12; /* 1/2^12 sec ~=.25ms */
+MODULE_PARM_DESC(mprague_burst_shift,
+				 "maximal GSO burst duration as a base-2 negative exponent");
+module_param(mprague_burst_shift, uint, 0644);
+
 static struct tcp_congestion_ops mprague_reno;
 
 static inline int mprague_sk_can_send(const struct sock *sk)
@@ -146,31 +151,55 @@ static u32 mprague_ssthresh(struct sock *sk)
 }
 
 
+/* Ensure prague sends traffic as smoothly as possible:
+ *   - Pacing is set to 100% during AI
+ *   - The max GSO burst size is bounded in time at the pacing rate.   
+ *   We keep the 200% pacing rate during SS, as we need to send 2 MSS back to
+ *   back for every received ACK.
+ */
+static void mprague_update_pacing_rate(struct sock *sk)
+{
+	const struct tcp_sock *tp = tcp_sk(sk);
+	u32 max_inflight;
+	u64 rate;
+
+	max_inflight = max(tp->snd_cwnd, tcp_packets_in_flight(tp));
+
+	rate = (u64)(USEC_PER_SEC << 3) * max_inflight;
+	if (tp->snd_cwnd < tp->snd_ssthresh / 2)
+		rate <<= 1;
+	if (likely(tp->srtt_us))
+		rate = div_u64(rate, tp->srtt_us) + 1;
+	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
+
+	WRITE_ONCE(mprague_ca(sk)->max_tso_burst,
+			max_t(u32, 1, rate >> mprague_burst_shift));
+	WRITE_ONCE(sk->sk_pacing_rate, rate * tp->mss_cache);
+}
+
+/* Scale pacing rate based on the number of consecutive segments
+ * that can be sent, i.e., rate is 200% for high BDPs
+ * that are perfectly ACK-paced (i.e., where packets_out is
+ * almost max_inflight), but decrease to 100% if a full
+ * RTT is aggregated into a single ACK or if we have more in
+ * flight data than our cwnd allows.
+ */
+/* pacing_rate = rate + rate * (1 + tp->packets_out) / max_inflight; */
+/*
 static void mprague_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	u64 max_burst, rate, pacing_rate;
 	u32 max_inflight;
-
 	max_inflight = max(tp->snd_cwnd, tp->packets_out);
-
 	rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3) * max_inflight;
 	if (likely(tp->srtt_us))
 		do_div(rate, tp->srtt_us);
-
 	pacing_rate = rate;
 	if (tp->snd_cwnd < tp->snd_ssthresh / 2)
 		pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ss_ratio;
 	else if (tp->packets_out < tp->snd_cwnd)
-		/* Scale pacing rate based on the number of consecutive segments
-		 * that can be sent, i.e., rate is 200% for high BDPs
-		 * that are perfectly ACK-paced (i.e., where packets_out is
-		 * almost max_inflight), but decrease to 100% if a full
-		 * RTT is aggregated into a single ACK or if we have more in
-		 * flight data than our cwnd allows.
-		 */
-		/* pacing_rate = rate + rate * (1 + tp->packets_out) / max_inflight; */
-		pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ca_ratio;
+	pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ca_ratio;
 	do_div(pacing_rate, 100);
 	rate = min_t(u64, pacing_rate, sk->sk_max_pacing_rate);
 	WRITE_ONCE(sk->sk_pacing_rate, rate);
@@ -182,10 +211,10 @@ static void mprague_update_pacing_rate(struct sock *sk)
 		do_div(max_burst, pacing_rate);
 	}
 
-
 	max_burst = max_t(u32, 1, max_burst);
 	WRITE_ONCE(mprague_ca(sk)->max_tso_burst, max_burst);
 }
+*/
 
 static void mprague_rtt_expired(struct sock *sk)
 {
@@ -348,8 +377,7 @@ static void mprague_cong_control(struct sock *sk, const struct rate_sample *rs)
 	mprague_update_window(sk, rs);
 	if (mprague_rtt_complete(sk))
 		mprague_rtt_expired(sk);
-	if (mprague_debug==0)
-		mprague_update_pacing_rate(sk);
+	mprague_update_pacing_rate(sk);
 }
 
 
@@ -444,7 +472,7 @@ static u32 mprague_cwnd_undo(struct sock *sk)
 static void mprague_release(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-
+        cmpxchg(&sk->sk_pacing_status, SK_PACING_NEEDED, SK_PACING_NONE);
 	/* We forced the use of ECT(x), disable this before switching CC */
 	INET_ECN_dontxmit(sk);
 	/* TODO(otilmans) if we allow that param to be 0644 then we'll
@@ -474,12 +502,12 @@ static void mprague_init(struct sock *sk)
 		ca->max_tso_burst = 1;
 		if (mprague_ect)
 			tp->ecn_flags |= TCP_ECN_ECT_1;
-		if (mprague_debug==0)
-			cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,SK_PACING_NEEDED);
-
+		
+	        cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE, SK_PACING_NEEDED);
 		mprague_reset(tp, ca);
 		return;
 	} 
+
 	/* Cannot use Prague without AccECN
 	 * TODO(otilmans) If TCP_ECN_OK, we can trick the receiver to echo few
 	 * ECEs per CE received by setting CWR at most once every two segments.

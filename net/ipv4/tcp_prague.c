@@ -58,6 +58,12 @@ static int prague_debug __read_mostly = 0;
 static int prague_ecn_plus_plus __read_mostly = 1;
 static u32 prague_burst_usec __read_mostly = 250; /* .25ms */
 
+static u32 prague_burst_shift __read_mostly = 12; /* 1/2^12 sec ~=.25ms */
+MODULE_PARM_DESC(prague_burst_shift,
+				 "maximal GSO burst duration as a base-2 negative exponent");
+module_param(prague_burst_shift, uint, 0644);
+
+
 MODULE_PARM_DESC(prague_shift_g, "gain parameter for alpha EWMA");
 module_param(prague_shift_g, uint, 0644);
 
@@ -129,44 +135,32 @@ static u32 prague_ssthresh(struct sock *sk)
 	return max(tp->snd_cwnd - (u32)reduction, 2U);
 }
 
+/* Ensure prague sends traffic as smoothly as possible:
+ * - Pacing is set to 100% during AI
+ * - The max GSO burst size is bounded in time at the pacing rate.
+ *  We keep the 200% pacing rate during SS, as we need to send 2 MSS back to
+ *  back for every received ACK.
+ */
 static void prague_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
-	u64 max_burst, rate, pacing_rate;
 	u32 max_inflight;
+	u64 rate;
 
-	max_inflight = max(tp->snd_cwnd, tp->packets_out);
+	max_inflight = max(tp->snd_cwnd, tcp_packets_in_flight(tp));
 
-	rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3) * max_inflight;
-	if (likely(tp->srtt_us))
-		do_div(rate, tp->srtt_us);
-
-	pacing_rate = rate;
+	rate = (u64)(USEC_PER_SEC << 3) * max_inflight;
 	if (tp->snd_cwnd < tp->snd_ssthresh / 2)
-		pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ss_ratio;
-	else if (tp->packets_out < tp->snd_cwnd)
-		/* Scale pacing rate based on the number of consecutive segments
-		 * that can be sent, i.e., rate is 200% for high BDPs
-		 * that are perfectly ACK-paced (i.e., where packets_out is
-		 * almost max_inflight), but decrease to 100% if a full
-		 * RTT is aggregated into a single ACK or if we have more in
-		 * flight data than our cwnd allows.
-		 */
-		/* pacing_rate = rate + rate * (1 + tp->packets_out) / max_inflight; */
-		pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ca_ratio;
-	do_div(pacing_rate, 100);
-	rate = min_t(u64, pacing_rate, sk->sk_max_pacing_rate);
-	WRITE_ONCE(sk->sk_pacing_rate, rate);
+		rate <<= 1;
+	if (likely(tp->srtt_us))
+		rate = div_u64(rate, tp->srtt_us) + 1;
+	rate = min_t(u64, rate, sk->sk_max_pacing_rate);
 
-	max_burst = div_u64(rate * prague_burst_usec,
-			tp->mss_cache * USEC_PER_SEC);
-	if (likely(pacing_rate)) {
-		max_burst *= rate;
-		do_div(max_burst, pacing_rate);
-	}
-	max_burst = max_t(u32, 1, max_burst);
-	WRITE_ONCE(prague_ca(sk)->max_tso_burst, max_burst);
+	WRITE_ONCE(prague_ca(sk)->max_tso_burst,
+			max_t(u32, 1, rate >> prague_burst_shift));
+	WRITE_ONCE(sk->sk_pacing_rate, rate * tp->mss_cache);
 }
+
 
 static void prague_rtt_expired(struct sock *sk)
 {
@@ -225,7 +219,6 @@ static void prague_cong_control(struct sock *sk, const struct rate_sample *rs)
 	prague_update_window(sk, rs);
 	if (prague_rtt_complete(sk))
 		prague_rtt_expired(sk);
-       if (prague_debug==0)
 	prague_update_pacing_rate(sk);
 }
 
@@ -332,7 +325,7 @@ static void prague_init(struct sock *sk)
 		struct tcp_sock *tp = tcp_sk(sk);
 
 		ca->prior_rcv_nxt = tp->rcv_nxt;
-                     ca->upscaled_alpha = PRAGUE_MAX_ALPHA << prague_shift_g;
+		ca->upscaled_alpha = PRAGUE_MAX_ALPHA << prague_shift_g;
 		ca->loss_cwnd = 0;
 		ca->saw_ce = tp->delivered_ce != TCP_ACCECN_CEP_INIT;
 		/* Conservatively start with a very low TSO limit */
@@ -340,8 +333,7 @@ static void prague_init(struct sock *sk)
 
 		if (prague_ect)
 			tp->ecn_flags |= TCP_ECN_ECT_1;
-                if (prague_debug==0)
-		    cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,SK_PACING_NEEDED);
+		cmpxchg(&sk->sk_pacing_status, SK_PACING_NONE,SK_PACING_NEEDED);
 
 		prague_reset(tp, ca);
 		return;
@@ -352,7 +344,7 @@ static void prague_init(struct sock *sk)
 	 * This is however quite sensitive to ACK thinning...
 	 */
 	prague_release(sk);
-	LOG(sk, "Switching back to reno fallback\n");
+	//LOG(sk, "Switching back to reno fallback\n");
 	inet_csk(sk)->icsk_ca_ops = &prague_reno;
 }
 
