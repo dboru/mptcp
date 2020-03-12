@@ -60,7 +60,7 @@ static u32 prague_burst_usec __read_mostly = 250; /* .25ms */
 
 static u32 prague_burst_shift __read_mostly = 12; /* 1/2^12 sec ~=.25ms */
 MODULE_PARM_DESC(prague_burst_shift,
-				 "maximal GSO burst duration as a base-2 negative exponent");
+		"maximal GSO burst duration as a base-2 negative exponent");
 module_param(prague_burst_shift, uint, 0644);
 
 
@@ -135,13 +135,53 @@ static u32 prague_ssthresh(struct sock *sk)
 	return max(tp->snd_cwnd - (u32)reduction, 2U);
 }
 
+static void prague_update_pacing_rate(struct sock *sk)
+{
+	const struct tcp_sock *tp = tcp_sk(sk);
+	u64 max_burst, rate, pacing_rate;
+	u32 max_inflight;
+
+	max_inflight = max(tp->snd_cwnd, tp->packets_out);
+
+	rate = (u64)tp->mss_cache * (USEC_PER_SEC << 3) * max_inflight;
+	if (likely(tp->srtt_us))
+		do_div(rate, tp->srtt_us);
+
+	pacing_rate = rate;
+	if (tp->snd_cwnd < tp->snd_ssthresh / 2)
+		pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ss_ratio;
+	else if (tp->packets_out < tp->snd_cwnd)
+		/* Scale pacing rate based on the number of consecutive segments that can be sent, i.e., rate is 200% for high BDPs
+		   that are perfectly ACK-paced (i.e., where packets_out is almost max_inflight), but decrease to 100% if a full
+		   RTT is aggregated into a single ACK or if we have more in flight data than our cwnd allows.
+		 */
+		
+		/* pacing_rate = rate + rate * (1 + tp->packets_out) / max_inflight; */
+	       pacing_rate *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ca_ratio;
+	do_div(pacing_rate, 100);
+	rate = min_t(u64, pacing_rate, sk->sk_max_pacing_rate);
+	WRITE_ONCE(sk->sk_pacing_rate, rate);
+
+	max_burst = div_u64(rate * prague_burst_usec,
+			tp->mss_cache * USEC_PER_SEC);
+	if (likely(pacing_rate)) {
+		max_burst *= rate;
+		do_div(max_burst, pacing_rate);
+	}
+	max_burst = max_t(u32, 1, max_burst);
+	WRITE_ONCE(prague_ca(sk)->max_tso_burst, max_burst);
+}
+
+
+
 /* Ensure prague sends traffic as smoothly as possible:
  * - Pacing is set to 100% during AI
  * - The max GSO burst size is bounded in time at the pacing rate.
  *  We keep the 200% pacing rate during SS, as we need to send 2 MSS back to
  *  back for every received ACK.
  */
-static void prague_update_pacing_rate(struct sock *sk)
+/*
+ * static void prague_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	u32 max_inflight;
@@ -160,6 +200,7 @@ static void prague_update_pacing_rate(struct sock *sk)
 			max_t(u32, 1, rate >> prague_burst_shift));
 	WRITE_ONCE(sk->sk_pacing_rate, rate * tp->mss_cache);
 }
+*/
 
 
 static void prague_rtt_expired(struct sock *sk)

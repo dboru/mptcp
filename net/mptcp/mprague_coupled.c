@@ -157,7 +157,7 @@ static u32 mprague_ssthresh(struct sock *sk)
  *   We keep the 200% pacing rate during SS, as we need to send 2 MSS back to
  *   back for every received ACK.
  */
-static void mprague_update_pacing_rate(struct sock *sk)
+/*static void mprague_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	u32 max_inflight;
@@ -176,6 +176,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
 			max_t(u32, 1, rate >> mprague_burst_shift));
 	WRITE_ONCE(sk->sk_pacing_rate, rate * tp->mss_cache);
 }
+*/
 
 /* Scale pacing rate based on the number of consecutive segments
  * that can be sent, i.e., rate is 200% for high BDPs
@@ -185,7 +186,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
  * flight data than our cwnd allows.
  */
 /* pacing_rate = rate + rate * (1 + tp->packets_out) / max_inflight; */
-/*
+
 static void mprague_update_pacing_rate(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
@@ -214,7 +215,7 @@ static void mprague_update_pacing_rate(struct sock *sk)
 	max_burst = max_t(u32, 1, max_burst);
 	WRITE_ONCE(mprague_ca(sk)->max_tso_burst, max_burst);
 }
-*/
+
 
 static void mprague_rtt_expired(struct sock *sk)
 {
