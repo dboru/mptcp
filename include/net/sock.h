@@ -954,7 +954,7 @@ static inline int sk_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 static inline void sk_incoming_cpu_update(struct sock *sk)
 {
 	int cpu = raw_smp_processor_id();
-
+        
 	if (unlikely(READ_ONCE(sk->sk_incoming_cpu) != cpu))
 		WRITE_ONCE(sk->sk_incoming_cpu, cpu);
 }
@@ -2356,6 +2356,7 @@ static inline void sock_write_timestamp(struct sock *sk, ktime_t kt)
 	write_sequnlock(&sk->sk_stamp_seq);
 #else
 	WRITE_ONCE(sk->sk_stamp, kt);
+	
 #endif
 }
 

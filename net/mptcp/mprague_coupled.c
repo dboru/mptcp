@@ -260,7 +260,7 @@ static void mprague_recalc_beta( const struct sock *sk)
 	const struct mptcp_cb *mpcb = tcp_sk(sk)->mpcb;
 	const struct mptcp_tcp_sock *mptcp;
 
-	u64 beta = 0;
+	u64 beta = 1;
 	u32 best_rtt = 0xffffffff;
 	int can_send = 0;
 
@@ -282,10 +282,8 @@ static void mprague_recalc_beta( const struct sock *sk)
 
 	/* No subflow is able to send - we don't care anymore */
 	if (unlikely(!can_send)){
-		beta = 1;
 		goto exit;
 	}
-
 
 	mptcp_for_each_sub(mpcb, mptcp) {
 		const struct sock *sub_sk = mptcp_to_sock(mptcp);
@@ -296,12 +294,10 @@ static void mprague_recalc_beta( const struct sock *sk)
 	}
 
 	if (unlikely(!beta))
-		beta = 1;
+	     beta = beta_scale;
 
 exit:  
-	if (!beta)
-		beta = 1;
-	mprague_set_beta(mptcp_meta_sk(sk), beta);
+    mprague_set_beta(mptcp_meta_sk(sk), beta);
 
 }
 
@@ -317,7 +313,6 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 		tcp_reno_cong_avoid(sk, ack, acked);
 		return;
 	}
-
 
 	if (!tcp_is_cwnd_limited(sk))
 	{      
@@ -343,9 +338,7 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 	if (unlikely(!beta))
 		beta = beta_scale;
-
 	snd_cwnd = (int) div_u64(beta, beta_scale);
-
 	if (snd_cwnd < tp->snd_cwnd)
 		snd_cwnd = tp->snd_cwnd;
 
@@ -353,8 +346,6 @@ static void mprague_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	tcp_cong_avoid_ai(tp, snd_cwnd, acked);
 	if (tp->snd_cwnd > cwnd_old)
 		mprague_recalc_beta(sk);
-
-
 }
 
 static void mprague_update_window(struct sock *sk,

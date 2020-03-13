@@ -264,7 +264,7 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	//const struct mptcp_cb *mpcb = tp->mpcb;
-	int snd_cwnd = 0;
+	int snd_cwnd = 0,cwnd_old;
 	u64 beta;
 
 
@@ -290,9 +290,8 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	beta = mdtcp_get_beta(mptcp_meta_sk(sk));
 
 	/* This may happen, if at the initialization, the mpcb
-	 *          * was not yet attached to the sock, and thus
-	 *                   * initializing beta failed.
-	 *                            */
+	 * was not yet attached to the sock, and thus initializing beta failed.
+	 */
 	if (unlikely(!beta))
 		beta = beta_scale;
 
@@ -301,6 +300,12 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	if (snd_cwnd < tp->snd_cwnd)
 		snd_cwnd = tp->snd_cwnd;
 
+        cwnd_old = tp->snd_cwnd;
+	tcp_cong_avoid_ai(tp, snd_cwnd, acked);
+	if (tp->snd_cwnd > cwnd_old)
+	     mdtcp_recalc_beta(sk);
+
+    /*	
 	if (tp->snd_cwnd_cnt >= snd_cwnd) {
 		if (tp->snd_cwnd < tp->snd_cwnd_clamp) {
 			tp->snd_cwnd++;
@@ -311,7 +316,7 @@ static void mdtcp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	} else {
 		tp->snd_cwnd_cnt++;
 	}
-
+ */
 }
 
 static void mdtcp_cwnd_event(struct sock *sk, enum tcp_ca_event ev)
