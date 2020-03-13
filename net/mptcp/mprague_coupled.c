@@ -368,8 +368,10 @@ static void mprague_update_window(struct sock *sk,
 	/* We don't implement PRR at the moment... */
 	/* if (inet_csk(sk)->icsk_ca_state != TCP_CA_Open)
 	   return; */
-
-	mprague_cong_avoid(sk, 0, rs->acked_sacked);
+	if (mprague_debug==1)
+          tcp_reno_cong_avoid(sk, 0, rs->acked_sacked);
+	else
+	  mprague_cong_avoid(sk, 0, rs->acked_sacked);
 }
 
 

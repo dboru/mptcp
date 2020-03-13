@@ -305,7 +305,7 @@ EXPORT_SYMBOL(cookie_ecn_ok);
 
 bool cookie_accecn_ok(const struct tcphdr *th)
 {
-	return tcp_accecn_ace(th) >= 1;
+	return tcp_accecn_ace(th) > 1;
 }
 EXPORT_SYMBOL(cookie_accecn_ok);
 

@@ -2024,10 +2024,8 @@ static int tso_fragment(struct sock *sk, struct sk_buff *skb, unsigned int len,
 	flags = TCP_SKB_CB(skb)->tcp_flags;
 	TCP_SKB_CB(skb)->tcp_flags = flags & ~(TCPHDR_FIN | TCPHDR_PSH);
 	TCP_SKB_CB(buff)->tcp_flags = flags;
-        TCP_SKB_CB(buff)->tcp_res_flags = TCP_SKB_CB(skb)->tcp_res_flags;
-	TCP_SKB_CB(buff)->sacked = TCP_SKB_CB(skb)->sacked;
 	/* This packet was never sent out yet, so no SACK bits. */
-	//TCP_SKB_CB(buff)->sacked = 0;
+	TCP_SKB_CB(buff)->sacked = 0;
 
 	tcp_skb_fragment_eor(skb, buff);
 
@@ -3478,8 +3476,6 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	rcu_read_unlock();
 #endif
 
-	/* Do not fool tcpdump (if any), clean our debris */
-	 skb->tstamp = 0;
 	skb->skb_mstamp_ns = now;
 	tcp_add_tx_delay(skb, tp);
 

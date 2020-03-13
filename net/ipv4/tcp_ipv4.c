@@ -1843,9 +1843,9 @@ static void tcp_v4_fill_cb(struct sk_buff *skb, const struct iphdr *iph,
 	TCP_SKB_CB(skb)->mptcp_flags = 0;
 	TCP_SKB_CB(skb)->dss_off = 0;
 #endif
+	TCP_SKB_CB(skb)->tcp_res_flags = tcp_res_flag_byte(th); 
 	TCP_SKB_CB(skb)->tcp_flags = tcp_flag_byte(th);
-	TCP_SKB_CB(skb)->tcp_res_flags = tcp_res_flag_byte(th);
-        TCP_SKB_CB(skb)->tcp_tw_isn = 0;
+	TCP_SKB_CB(skb)->tcp_tw_isn = 0;
 	TCP_SKB_CB(skb)->ip_dsfield = ipv4_get_dsfield(iph);
 	TCP_SKB_CB(skb)->sacked	 = 0;
 	TCP_SKB_CB(skb)->has_rxtstamp =
